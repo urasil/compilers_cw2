@@ -25,6 +25,9 @@ public class ConstantFolder {
     JavaClass original = null;
     JavaClass optimized = null;
 
+    boolean debug = true;
+    boolean verbose = debug && true;
+
     public ConstantFolder(String classFilePath) {
         try {
             this.parser = new ClassParser(classFilePath);
@@ -52,7 +55,18 @@ public class ConstantFolder {
             boolean modified = true;
             while (modified) {
                 modified = false;
+
+                if (verbose) {
+                    System.out.println("Before folding: " + instList);
+                }
+
                 modified |= simpleFolding(cpgen, instList);
+
+                if (verbose) {
+                    System.out.println("After simple folding: " + instList);
+                }
+
+
                 modified |= constantVariableFolding(cpgen, instList);
                 modified |= dynamicVariableFolding(cpgen, instList);
             }
@@ -396,7 +410,10 @@ public class ConstantFolder {
             Number res = computeArithmeticResult(val1, val2, inst3);
             if (res != null) {
                 Instruction r = createConstantInstruction(res, cpgen);
-                System.out.println("Folding: " + inst1 + " " + inst2 + " "+ inst3.getName() + " -> " + r);
+                if(debug){
+                    System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ inst3.getName() + " -> " + r);
+                    System.err.println("Adding: " + r);
+                }
 
                 instructionList.insert(set[0], r);
 
@@ -413,8 +430,14 @@ public class ConstantFolder {
 
     private void safeDelete(InstructionList l, InstructionHandle handle, InstructionHandle newTarget) {
         try {
+            if(debug){
+                System.out.println("Deleting: " + handle);
+            }
             l.delete(handle);
         } catch (TargetLostException e) { // if a GOTO / cjumps to the deleted instruction
+            if(debug){
+                System.out.println("Target lost: " + handle + " -> " + newTarget);
+            }
             for (InstructionHandle branchingInstruction : e.getTargets()) {
                 for (InstructionTargeter targeter : branchingInstruction.getTargeters())
                     targeter.updateTarget(branchingInstruction, newTarget);
