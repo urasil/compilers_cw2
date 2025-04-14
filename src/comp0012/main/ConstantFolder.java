@@ -58,19 +58,10 @@ public class ConstantFolder {
             while (modified) {
                 modified = false;
 
-                if (verbose) {
-                    System.out.println("Before folding: " + instList);
-                }
-
                 modified |= simpleFolding(cpgen, instList);
-
-                if (verbose) {
-                    System.out.println("After simple folding: " + instList);
-                }
-
-
                 modified |= constantVariableFolding(cpgen, instList);
                 modified |= dynamicVariableFolding(cpgen, instList);
+                modified |= removeUnreachableCode(cpgen, instList);
             }
 
             instList.setPositions(true);
@@ -414,7 +405,7 @@ public class ConstantFolder {
                 Instruction r = createConstantInstruction(res, cpgen);
                 if(debug){
                     System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ inst3.getName() + " => " + r);
-                    System.err.println("Adding: " + r);
+                    System.out.println("Adding: " + r);
                 }
 
                 instructionList.insert(set[0], r);
@@ -678,43 +669,22 @@ public class ConstantFolder {
             if (val1 != null && val2 != null) {
                 boolean result = evaluateIntComparison(val1.intValue(), val2.intValue(), ifInst.getOpcode());
 
-
+                InstructionHandle newHandle = set[0].getPrev();
                 if(result){
                     BranchInstruction newInst = new GOTO(ifInst.getTarget());
+                    newHandle = instList.insert(set[0], newInst);
                     if(debug){
                         System.out.println("Folding: " + set[0].getInstruction() + " ("+val1+")"+" " + set[1].getInstruction() + " ("+val2+")" + " "+ ifInst.getName() + " => " + newInst);
-                        System.err.println("Adding: " + newInst);
+                        System.out.println("Adding: " + newInst);
                     }
-                    InstructionHandle newHandle = instList.insert(set[0], newInst);
-                    try {
-                        instList.delete(set[0], set[2]);
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        for (InstructionHandle target : e.getTargets()) {
-                            for (InstructionTargeter targeter : target.getTargeters()) {
-                                targeter.updateTarget(target, newHandle);
-                            }
-                        }
-                    }
-
-                }else{
-                    Instruction newInst = new NOP();   
-                    InstructionHandle newHandle = instList.insert(set[0], newInst);
-                    try {
-                        instList.delete(set[0], set[2]);
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        for (InstructionHandle target : e.getTargets()) {
-                            for (InstructionTargeter targeter : target.getTargeters()) {
-                                targeter.updateTarget(target, newHandle);
-                            }
-                        }
-                    }
-                }               
+                }      
                 
+                safeDelete(instList, set[0], newHandle);
+                safeDelete(instList, set[1], newHandle);
+                safeDelete(instList, set[2], newHandle);
 
-
-              
+                modified = true;
+                           
             }
         }
 
@@ -731,34 +701,24 @@ public class ConstantFolder {
                 boolean branch = evaluateComparison(cmpResult, ifInst.getOpcode());
 
                 // Replace with either GOTO or NOP depending on the result
+                InstructionHandle newHandle = set[0].getPrev();
                 if (branch){
                     BranchInstruction newInst = new GOTO(ifInst.getTarget());
-                    InstructionHandle newHandle = instList.insert(set[0], newInst);
-                    try {
-                        instList.delete(set[0], set[3]);
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        for (InstructionHandle target : e.getTargets()) {
-                            for (InstructionTargeter targeter : target.getTargeters()) {
-                                targeter.updateTarget(target, newHandle);
-                            }
-                        }
-                    }
+                    newHandle = instList.insert(set[0], newInst);
 
-                }else{
-                    Instruction newInst = new NOP();
-                    InstructionHandle newHandle = instList.insert(set[0], newInst);
-                    try {
-                        instList.delete(set[0], set[3]);
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        for (InstructionHandle target : e.getTargets()) {
-                            for (InstructionTargeter targeter : target.getTargeters()) {
-                                targeter.updateTarget(target, newHandle);
-                            }
-                        }
+                    if(debug){
+                        System.out.println("Folding: " + set[0].getInstruction() + " ("+val1+")"+" " + set[1].getInstruction() + " ("+val2+")" + " LCMP "+ ifInst.getName() + " => " + newInst);
+                        System.out.println("Adding: " + newInst);
                     }
-                }                
+                }
+
+                safeDelete(instList, set[0], newHandle);
+                safeDelete(instList, set[1], newHandle);
+                safeDelete(instList, set[2], newHandle);
+                safeDelete(instList, set[3], newHandle);
+                
+                modified = true;
+                
             }
         }
 
@@ -820,7 +780,7 @@ public class ConstantFolder {
                 }
             }
         }
-               
+
 
         // sixth pas-> remove dead stores (stores to variables that are never loaded)
         for (Integer varIndex : storeInstructions.keySet()) {
@@ -854,6 +814,16 @@ public class ConstantFolder {
         boolean modified = false;
         return modified;
     }
+
+
+    // Remove unreachable code
+    private boolean removeUnreachableCode(ConstantPoolGen cpgen, InstructionList instList) {
+        boolean modified = false;
+        InstructionFinder finder = new InstructionFinder(instList);
+        
+        return modified;
+    }
+
 
     public void write(String optimisedFilePath) {
         this.optimize();
