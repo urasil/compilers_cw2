@@ -53,7 +53,7 @@ public class ConstantFolder {
             while (modified) {
                 modified = false;
                 modified |= simpleFolding(cpgen, instList);
-                // modified |= constantVariableFolding(cpgen, instList);
+                modified |= constantVariableFolding(cpgen, instList);
                 modified |= dynamicVariableFolding(cpgen, instList);
             }
 
@@ -393,9 +393,11 @@ public class ConstantFolder {
                 continue;
             }
 
-            Number newInst = computeArithmeticResult(val1, val2, inst3);
-            if (newInst != null) {
-                Instruction r = createConstantInstruction(newInst, cpgen);
+            Number res = computeArithmeticResult(val1, val2, inst3);
+            if (res != null) {
+                Instruction r = createConstantInstruction(res, cpgen);
+                System.out.println("Folding: " + inst1 + " " + inst2 + " "+ inst3.getName() + " -> " + r);
+
                 instructionList.insert(set[0], r);
 
                 safeDelete(instructionList, set[0], set[0].getPrev());
