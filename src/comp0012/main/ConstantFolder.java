@@ -52,9 +52,9 @@ public class ConstantFolder {
             boolean modified = true;
             while (modified) {
                 modified = false;
-                modified |= constantVariableFolding(cpgen, instList);
-                modified |= dynamicVariableFolding(cpgen, instList);
                 modified |= simpleFolding(cpgen, instList);
+                // modified |= constantVariableFolding(cpgen, instList);
+                modified |= dynamicVariableFolding(cpgen, instList);
             }
 
             instList.setPositions(true);
@@ -376,44 +376,48 @@ public class ConstantFolder {
     // PERFORM SIMPLE FOLDING
     private boolean simpleFolding(ConstantPoolGen cpgen, InstructionList instructionList) {
         boolean modified = false;
-        InstructionHandle[] handles = instructionList.getInstructionHandles();
-        Stack<Number> valueStack = new Stack<>();
-        Stack<InstructionHandle> handleStack = new Stack<>();
 
-        for (int i = 0; i < handles.length; i++) {
-            InstructionHandle current = handles[i];
-            Instruction inst = current.getInstruction();
+        InstructionFinder finder = new InstructionFinder(instructionList);
+        String pattern = "PushInstruction PushInstruction ArithmeticInstruction";
 
-            if (isConstantPushInstruction(inst)) {
-                Number value = getConstantValue(inst, cpgen);
-                if (value != null) {
-                    valueStack.push(value);
-                    handleStack.push(current);
-                }
-            } else if (isConversionInstruction(inst)) {
-                applyConversion(inst, valueStack, handleStack);
-            } else if (isArithmeticInstruction(inst)) {
-                if (foldArithmetic(inst, cpgen, instructionList, valueStack, handleStack, current)) {
-                    modified = true;
-                    return true;
-                }
-            } else if (isFloatingPointComparison(inst)) {
-                if (foldFloatingComparison(inst, cpgen, instructionList, valueStack, handleStack, current)) {
-                    modified = true;
-                    return true;
-                }
-            } else if (inst instanceof IfInstruction && isIntComparison(inst.getOpcode())) {
-                if (foldIntComparison((IfInstruction) inst, cpgen, instructionList, valueStack, handleStack, current)) {
-                    modified = true;
-                    return true;
-                }
-            } else {
-                valueStack.clear();
-                handleStack.clear();
+        for (Iterator it = finder.search(pattern); it.hasNext();) {
+            InstructionHandle[] set = (InstructionHandle[]) it.next();
+            Instruction inst1 = set[0].getInstruction();
+            Instruction inst2 = set[1].getInstruction();
+            Instruction inst3 = set[2].getInstruction();
+
+            Number val1 = getConstantValue(inst1, cpgen);
+            Number val2 = getConstantValue(inst2, cpgen);
+
+            if (val1 == null || val2 == null) {
+                continue;
+            }
+
+            Number newInst = computeArithmeticResult(val1, val2, inst3);
+            if (newInst != null) {
+                Instruction r = createConstantInstruction(newInst, cpgen);
+                instructionList.insert(set[0], r);
+
+                safeDelete(instructionList, set[0], set[0].getPrev());
+                safeDelete(instructionList, set[1], set[0].getPrev());
+                safeDelete(instructionList, set[2], set[0].getPrev());
+
+                modified = true;
             }
         }
 
         return modified;
+    }
+
+    private void safeDelete(InstructionList l, InstructionHandle handle, InstructionHandle newTarget) {
+        try {
+            l.delete(handle);
+        } catch (TargetLostException e) { // if a GOTO / cjumps to the deleted instruction
+            for (InstructionHandle branchingInstruction : e.getTargets()) {
+                for (InstructionTargeter targeter : branchingInstruction.getTargeters())
+                    targeter.updateTarget(branchingInstruction, newTarget);
+            }
+        }
     }
 
     private void applyConversion(Instruction inst, Stack<Number> valueStack, Stack<InstructionHandle> handleStack) {
