@@ -82,58 +82,54 @@ public class ConstantFolder {
         optimized = gen.getJavaClass();
     }
 
-    // UTILITY FUNCTIONS
-    // long comparisons
+    // long comp
     private boolean evaluateComparison(int cmpResult, short opcode) {
-        switch (opcode) {
-            case Constants.IFLE:
-                return cmpResult <= 0;
-            case Constants.IFLT:
-                return cmpResult < 0;
-            case Constants.IFGE:
-                return cmpResult >= 0;
-            case Constants.IFGT:
-                return cmpResult > 0;
-            case Constants.IFEQ:
-                return cmpResult == 0;
-            case Constants.IFNE:
-                return cmpResult != 0;
-            default:
-                throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
+        if (opcode == Constants.IFLE) {
+            return cmpResult <= 0;
+        } else if (opcode == Constants.IFLT) {
+            return cmpResult < 0;
+        } else if (opcode == Constants.IFGE) {
+            return cmpResult >= 0;
+        } else if (opcode == Constants.IFGT) {
+            return cmpResult > 0;
+        } else if (opcode == Constants.IFEQ) {
+            return cmpResult == 0;
+        } else if (opcode == Constants.IFNE) {
+            return cmpResult != 0;
+        } else {
+            throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
         }
     }
-
+    
     // int comparisons
     private boolean isIntComparison(short opcode) {
-        switch (opcode) {
-            case Constants.IF_ICMPEQ:
-            case Constants.IF_ICMPNE:
-            case Constants.IF_ICMPLT:
-            case Constants.IF_ICMPLE:
-            case Constants.IF_ICMPGT:
-            case Constants.IF_ICMPGE:
-                return true;
-            default:
-                return false;
+        if (opcode == Constants.IF_ICMPEQ ||
+            opcode == Constants.IF_ICMPNE ||
+            opcode == Constants.IF_ICMPLT ||
+            opcode == Constants.IF_ICMPLE ||
+            opcode == Constants.IF_ICMPGT ||
+            opcode == Constants.IF_ICMPGE) {
+            return true;
+        } else {
+            return false;
         }
     }
 
     private boolean evaluateIntComparison(int a, int b, short opcode) {
-        switch (opcode) {
-            case Constants.IF_ICMPEQ:
-                return (a == b);
-            case Constants.IF_ICMPNE:
-                return (a != b);
-            case Constants.IF_ICMPLT:
-                return (a < b);
-            case Constants.IF_ICMPLE:
-                return (a <= b);
-            case Constants.IF_ICMPGT:
-                return (a > b);
-            case Constants.IF_ICMPGE:
-                return (a >= b);
-            default:
-                throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
+        if (opcode == Constants.IF_ICMPEQ) {
+            return (a == b);
+        } else if (opcode == Constants.IF_ICMPNE) {
+            return (a != b);
+        } else if (opcode == Constants.IF_ICMPLT) {
+            return (a < b);
+        } else if (opcode == Constants.IF_ICMPLE) {
+            return (a <= b);
+        } else if (opcode == Constants.IF_ICMPGT) {
+            return (a > b);
+        } else if (opcode == Constants.IF_ICMPGE) {
+            return (a >= b);
+        } else {
+            throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
         }
     }
 
@@ -158,33 +154,32 @@ public class ConstantFolder {
     private Number performConversion(Number value, Instruction convInst) {
         String opName = convInst.getName().toUpperCase();
 
-        switch (opName) {
-            case "I2L":
-                return value.longValue();
-            case "I2F":
-                return value.floatValue();
-            case "I2D":
-                return value.doubleValue();
-            case "L2I":
-                return value.intValue();
-            case "L2F":
-                return value.floatValue();
-            case "L2D":
-                return value.doubleValue();
-            case "F2I":
-                return (int) value.floatValue();
-            case "F2L":
-                return (long) value.floatValue();
-            case "F2D":
-                return value.doubleValue();
-            case "D2I":
-                return (int) value.doubleValue();
-            case "D2L":
-                return (long) value.doubleValue();
-            case "D2F":
-                return (float) value.doubleValue();
-            default:
-                return null;
+        if ("I2L".equals(opName)) {
+            return value.longValue();
+        } else if ("I2F".equals(opName)) {
+            return value.floatValue();
+        } else if ("I2D".equals(opName)) {
+            return value.doubleValue();
+        } else if ("L2I".equals(opName)) {
+            return value.intValue();
+        } else if ("L2F".equals(opName)) {
+            return value.floatValue();
+        } else if ("L2D".equals(opName)) {
+            return value.doubleValue();
+        } else if ("F2I".equals(opName)) {
+            return (int) value.floatValue();
+        } else if ("F2L".equals(opName)) {
+            return (long) value.floatValue();
+        } else if ("F2D".equals(opName)) {
+            return value.doubleValue();
+        } else if ("D2I".equals(opName)) {
+            return (int) value.doubleValue();
+        } else if ("D2L".equals(opName)) {
+            return (long) value.doubleValue();
+        } else if ("D2F".equals(opName)) {
+            return (float) value.doubleValue();
+        } else {
+            return null;
         }
     }
 
@@ -267,21 +262,22 @@ public class ConstantFolder {
             int a = val1.intValue();
             int b = val2.intValue();
 
-            switch (opName) {
-                case "IADD":
-                    return a + b;
-                case "ISUB":
-                    return a - b;
-                case "IMUL":
-                    return a * b;
-                case "IDIV":
-                    if (b == 0)
-                        throw new ArithmeticException("Division by zero");
-                    return a / b;
-                case "IREM":
-                    if (b == 0)
-                        throw new ArithmeticException("Division by zero");
-                    return a % b;
+            if ("IADD".equals(opName)) {
+                return a + b;
+            } else if ("ISUB".equals(opName)) {
+                return a - b;
+            } else if ("IMUL".equals(opName)) {
+                return a * b;
+            } else if ("IDIV".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a / b;
+            } else if ("IREM".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a % b;
             }
         }
 
@@ -290,21 +286,22 @@ public class ConstantFolder {
             long a = val1.longValue();
             long b = val2.longValue();
 
-            switch (opName) {
-                case "LADD":
-                    return a + b;
-                case "LSUB":
-                    return a - b;
-                case "LMUL":
-                    return a * b;
-                case "LDIV":
-                    if (b == 0)
-                        throw new ArithmeticException("Division by zero");
-                    return a / b;
-                case "LREM":
-                    if (b == 0)
-                        throw new ArithmeticException("Division by zero");
-                    return a % b;
+            if ("LADD".equals(opName)) {
+                return a + b;
+            } else if ("LSUB".equals(opName)) {
+                return a - b;
+            } else if ("LMUL".equals(opName)) {
+                return a * b;
+            } else if ("LDIV".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a / b;
+            } else if ("LREM".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a % b;
             }
         }
 
@@ -313,17 +310,16 @@ public class ConstantFolder {
             float a = val1.floatValue();
             float b = val2.floatValue();
 
-            switch (opName) {
-                case "FADD":
-                    return a + b;
-                case "FSUB":
-                    return a - b;
-                case "FMUL":
-                    return a * b;
-                case "FDIV":
-                    return a / b;
-                case "FREM":
-                    return a % b;
+            if ("FADD".equals(opName)) {
+                return a + b;
+            } else if ("FSUB".equals(opName)) {
+                return a - b;
+            } else if ("FMUL".equals(opName)) {
+                return a * b;
+            } else if ("FDIV".equals(opName)) {
+                return a / b;
+            } else if ("FREM".equals(opName)) {
+                return a % b;
             }
         }
 
@@ -332,20 +328,20 @@ public class ConstantFolder {
             double a = val1.doubleValue();
             double b = val2.doubleValue();
 
-            switch (opName) {
-                case "DADD":
-                    return a + b;
-                case "DSUB":
-                    return a - b;
-                case "DMUL":
-                    return a * b;
-                case "DDIV":
-                    return a / b;
-                case "DREM":
-                    return a % b;
+            if ("DADD".equals(opName)) {
+                return a + b;
+            } else if ("DSUB".equals(opName)) {
+                return a - b;
+            } else if ("DMUL".equals(opName)) {
+                return a * b;
+            } else if ("DDIV".equals(opName)) {
+                return a / b;
+            } else if ("DREM".equals(opName)) {
+                return a % b;
             }
         }
 
+        // If none matched, return null
         return null;
     }
 
