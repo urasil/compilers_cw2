@@ -82,25 +82,6 @@ public class ConstantFolder {
         optimized = gen.getJavaClass();
     }
 
-    // long comp
-    private boolean evaluateComparison(int cmpResult, short opcode) {
-        if (opcode == Constants.IFLE) {
-            return cmpResult <= 0;
-        } else if (opcode == Constants.IFLT) {
-            return cmpResult < 0;
-        } else if (opcode == Constants.IFGE) {
-            return cmpResult >= 0;
-        } else if (opcode == Constants.IFGT) {
-            return cmpResult > 0;
-        } else if (opcode == Constants.IFEQ) {
-            return cmpResult == 0;
-        } else if (opcode == Constants.IFNE) {
-            return cmpResult != 0;
-        } else {
-            throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
-        }
-    }
-
     private boolean evaluateIntComparison(int a, int b, short opcode) {
         if (opcode == Constants.IF_ICMPEQ) {
             return (a == b);
@@ -119,7 +100,37 @@ public class ConstantFolder {
         }
     }
 
-    private void handleTargetLost(TargetLostException e, InstructionHandle newTarget) {
+    private boolean checkBranchCondition(int cmpResult, short opcode) {
+        if (opcode == Constants.IFLE) {
+            return cmpResult <= 0;
+        } else if (opcode == Constants.IFLT) {
+            return cmpResult < 0;
+        } else if (opcode == Constants.IFGE) {
+            return cmpResult >= 0;
+        } else if (opcode == Constants.IFGT) {
+            return cmpResult > 0;
+        } else if (opcode == Constants.IFEQ) {
+            return cmpResult == 0;
+        } else if (opcode == Constants.IFNE) {
+            return cmpResult != 0;
+        } else {
+            throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
+        }
+    }
+
+    private boolean isConstantPushInstruction(Instruction inst) {
+        // checks if instruction pushes a constant value onto stack
+        return (inst instanceof LDC) ||
+                (inst instanceof LDC2_W) ||
+                (inst instanceof BIPUSH) ||
+                (inst instanceof SIPUSH) ||
+                (inst instanceof ICONST) ||
+                (inst instanceof FCONST) ||
+                (inst instanceof LCONST) ||
+                (inst instanceof DCONST);
+    }
+
+    private void updateLostTargetReferences(TargetLostException e, InstructionHandle newTarget) {
         InstructionHandle[] lostTargets = e.getTargets();
         for (InstructionHandle lost : lostTargets) {
             InstructionTargeter[] targeters = lost.getTargeters();
@@ -131,19 +142,6 @@ public class ConstantFolder {
         }
     }
 
-    // checks if the instruction pushes a constant value to the stack
-    private boolean isConstantPushInstruction(Instruction inst) {
-        return (inst instanceof LDC) ||
-                (inst instanceof LDC2_W) ||
-                (inst instanceof BIPUSH) ||
-                (inst instanceof SIPUSH) ||
-                (inst instanceof ICONST) ||
-                (inst instanceof FCONST) ||
-                (inst instanceof LCONST) ||
-                (inst instanceof DCONST);
-    }
-
-    // gets constant value from instruction.
     private Number getConstantValue(Instruction inst, ConstantPoolGen cpg) {
         if (inst instanceof LDC) {
             Object value = ((LDC) inst).getValue(cpg);
@@ -171,8 +169,44 @@ public class ConstantFolder {
         return null;
     }
 
-    // computes operation
-    private Number computeArithmeticResult(Number val1, Number val2, Instruction arithmeticInst) {
+    private Instruction createConstantInstruction(Number value, ConstantPoolGen cpg) {
+        if (value instanceof Integer) {
+            int val = value.intValue();
+            if (val >= -1 && val <= 5) {
+                return new ICONST(val);
+            } else if (val >= Byte.MIN_VALUE && val <= Byte.MAX_VALUE) {
+                return new BIPUSH((byte) val);
+            } else if (val >= Short.MIN_VALUE && val <= Short.MAX_VALUE) {
+                return new SIPUSH((short) val);
+            } else {
+                return new LDC(cpg.addInteger(val));
+            }
+        } else if (value instanceof Long) {
+            long val = value.longValue();
+            if (val == 0L || val == 1L) {
+                return new LCONST((int) val);
+            } else {
+                return new LDC2_W(cpg.addLong(val));
+            }
+        } else if (value instanceof Float) {
+            float val = value.floatValue();
+            if (val == 0.0f || val == 1.0f || val == 2.0f) {
+                return new FCONST(val);
+            } else {
+                return new LDC(cpg.addFloat(val));
+            }
+        } else if (value instanceof Double) {
+            double val = value.doubleValue();
+            if (val == 0.0 || val == 1.0) {
+                return new DCONST(val);
+            } else {
+                return new LDC2_W(cpg.addDouble(val));
+            }
+        }
+        throw new UnsupportedOperationException("Unsupported value type: " + value.getClass().getName());
+    }
+
+    private Number executeArithmeticOperation(Number val1, Number val2, Instruction arithmeticInst) {
         String opName = arithmeticInst.getName().toUpperCase();
 
         // int
@@ -259,49 +293,9 @@ public class ConstantFolder {
             }
         }
 
-        // If none matched, return null
         return null;
     }
 
-    // creates constant-pushing instruction for numeric value.
-    private Instruction createConstantInstruction(Number value, ConstantPoolGen cpg) {
-        if (value instanceof Integer) {
-            int val = value.intValue();
-            if (val >= -1 && val <= 5) {
-                return new ICONST(val);
-            } else if (val >= Byte.MIN_VALUE && val <= Byte.MAX_VALUE) {
-                return new BIPUSH((byte) val);
-            } else if (val >= Short.MIN_VALUE && val <= Short.MAX_VALUE) {
-                return new SIPUSH((short) val);
-            } else {
-                return new LDC(cpg.addInteger(val));
-            }
-        } else if (value instanceof Long) {
-            long val = value.longValue();
-            if (val == 0L || val == 1L) {
-                return new LCONST((int) val);
-            } else {
-                return new LDC2_W(cpg.addLong(val));
-            }
-        } else if (value instanceof Float) {
-            float val = value.floatValue();
-            if (val == 0.0f || val == 1.0f || val == 2.0f) {
-                return new FCONST(val);
-            } else {
-                return new LDC(cpg.addFloat(val));
-            }
-        } else if (value instanceof Double) {
-            double val = value.doubleValue();
-            if (val == 0.0 || val == 1.0) {
-                return new DCONST(val);
-            } else {
-                return new LDC2_W(cpg.addDouble(val));
-            }
-        }
-        throw new UnsupportedOperationException("Unsupported value type: " + value.getClass().getName());
-    }
-
-    // PERFORM SIMPLE FOLDING
     private boolean simpleFolding(ConstantPoolGen cpgen, InstructionList instructionList) {
         boolean modified = false;
 
@@ -328,7 +322,7 @@ public class ConstantFolder {
                 continue;
             }
 
-            Number res = computeArithmeticResult(val1, val2, arithmeticInst);
+            Number res = executeArithmeticOperation(val1, val2, arithmeticInst);
             if (res != null) {
                 Instruction r = createConstantInstruction(res, cpgen);
                 if (debug) {
@@ -374,7 +368,6 @@ public class ConstantFolder {
         }
     }
 
-    // CONSTANT VARIABLE FOLDING
     private boolean constantVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
         // map to track whether a variable might be constant
@@ -499,7 +492,7 @@ public class ConstantFolder {
             if (val1 != null && val2 != null) {
                 int cmpResult = Long.compare(val1.longValue(), val2.longValue());
                 IfInstruction ifInst = (IfInstruction) set[3].getInstruction();
-                boolean branch = evaluateComparison(cmpResult, ifInst.getOpcode());
+                boolean branch = checkBranchCondition(cmpResult, ifInst.getOpcode());
 
                 // Replace with either GOTO or NOP depending on the result
                 InstructionHandle newHandle = set[0].getPrev();
@@ -779,7 +772,7 @@ public class ConstantFolder {
                         instList.delete(handle);
                         modified = true;
                     } catch (TargetLostException e) {
-                        handleTargetLost(e, handle.getNext());
+                        updateLostTargetReferences(e, handle.getNext());
                     }
                 }
 
@@ -845,7 +838,6 @@ public class ConstantFolder {
         return modified;
     }
 
-    // Remove unreachable code
     private boolean removeUnsedLoads(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
 
@@ -908,7 +900,7 @@ public class ConstantFolder {
                         instList.delete(storeIH);
                         modified = true;
                     } catch (TargetLostException e) {
-                        handleTargetLost(e, storeIH.getNext());
+                        updateLostTargetReferences(e, storeIH.getNext());
                     }
                 }
             }
