@@ -65,7 +65,7 @@ public class ConstantFolder {
 
                 modified |= simpleFolding(cpgen, instList);
                 modified |= constantVariableFolding(cpgen, instList);
-		modified |= dynamicFolding(cpgen, instList, methodGen);
+                modified |= dynamicVariableFolding(cpgen, instList);
                 modified |= removeUnsedLoads(cpgen, instList);
                 modified |= removeDeadCode(cpgen, instList);
                 modified |= removeUselessGOTO(instList);
@@ -100,20 +100,6 @@ public class ConstantFolder {
             throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
         }
     }
-    
-    // int comparisons
-    private boolean isIntComparison(short opcode) {
-        if (opcode == Constants.IF_ICMPEQ ||
-            opcode == Constants.IF_ICMPNE ||
-            opcode == Constants.IF_ICMPLT ||
-            opcode == Constants.IF_ICMPLE ||
-            opcode == Constants.IF_ICMPGT ||
-            opcode == Constants.IF_ICMPGE) {
-            return true;
-        } else {
-            return false;
-        }
-    }
 
     private boolean evaluateIntComparison(int a, int b, short opcode) {
         if (opcode == Constants.IF_ICMPEQ) {
@@ -145,44 +131,6 @@ public class ConstantFolder {
         }
     }
 
-    // check for conversion instr instances
-    private boolean isConversionInstruction(Instruction inst) {
-        return inst instanceof ConversionInstruction;
-    }
-
-    // do i2l, etc
-    private Number performConversion(Number value, Instruction convInst) {
-        String opName = convInst.getName().toUpperCase();
-
-        if ("I2L".equals(opName)) {
-            return value.longValue();
-        } else if ("I2F".equals(opName)) {
-            return value.floatValue();
-        } else if ("I2D".equals(opName)) {
-            return value.doubleValue();
-        } else if ("L2I".equals(opName)) {
-            return value.intValue();
-        } else if ("L2F".equals(opName)) {
-            return value.floatValue();
-        } else if ("L2D".equals(opName)) {
-            return value.doubleValue();
-        } else if ("F2I".equals(opName)) {
-            return (int) value.floatValue();
-        } else if ("F2L".equals(opName)) {
-            return (long) value.floatValue();
-        } else if ("F2D".equals(opName)) {
-            return value.doubleValue();
-        } else if ("D2I".equals(opName)) {
-            return (int) value.doubleValue();
-        } else if ("D2L".equals(opName)) {
-            return (long) value.doubleValue();
-        } else if ("D2F".equals(opName)) {
-            return (float) value.doubleValue();
-        } else {
-            return null;
-        }
-    }
-
     // checks if the instruction pushes a constant value to the stack
     private boolean isConstantPushInstruction(Instruction inst) {
         return (inst instanceof LDC) ||
@@ -194,7 +142,6 @@ public class ConstantFolder {
                 (inst instanceof LCONST) ||
                 (inst instanceof DCONST);
     }
-
 
     // gets constant value from instruction.
     private Number getConstantValue(Instruction inst, ConstantPoolGen cpg) {
@@ -222,31 +169,6 @@ public class ConstantFolder {
             return ((DCONST) inst).getValue();
         }
         return null;
-    }
-
-    // redirects targets from old instruction to the new one
-    private void redirectTargets(InstructionHandle h1, InstructionHandle h2,
-            InstructionHandle h3, InstructionHandle newHandle) {
-        if (h1.hasTargeters()) {
-            InstructionTargeter[] targeters = h1.getTargeters();
-            for (InstructionTargeter targeter : targeters) {
-                targeter.updateTarget(h1, newHandle);
-            }
-        }
-
-        if (h2.hasTargeters()) {
-            InstructionTargeter[] targeters = h2.getTargeters();
-            for (InstructionTargeter targeter : targeters) {
-                targeter.updateTarget(h2, newHandle);
-            }
-        }
-
-        if (h3.hasTargeters()) {
-            InstructionTargeter[] targeters = h3.getTargeters();
-            for (InstructionTargeter targeter : targeters) {
-                targeter.updateTarget(h3, newHandle);
-            }
-        }
     }
 
     // computes operation
@@ -448,140 +370,6 @@ public class ConstantFolder {
             for (InstructionHandle branchingInstruction : e.getTargets()) {
                 for (InstructionTargeter targeter : branchingInstruction.getTargeters())
                     targeter.updateTarget(branchingInstruction, newTarget);
-            }
-        }
-    }
-
-    private void applyConversion(Instruction inst, Stack<Number> valueStack, Stack<InstructionHandle> handleStack) {
-        if (!valueStack.isEmpty()) {
-            Number value = valueStack.pop();
-            InstructionHandle handle = handleStack.pop();
-            Number converted = performConversion(value, inst);
-            if (converted != null) {
-                valueStack.push(converted);
-                handleStack.push(handle);
-            }
-        }
-    }
-
-    private boolean foldArithmetic(Instruction inst, ConstantPoolGen cpgen, InstructionList list,
-            Stack<Number> valueStack, Stack<InstructionHandle> handleStack,
-            InstructionHandle current) {
-        if (valueStack.size() < 2)
-            return false;
-
-        Number b = valueStack.pop(), a = valueStack.pop();
-        InstructionHandle hb = handleStack.pop(), ha = handleStack.pop();
-        Number result = computeArithmeticResult(a, b, inst);
-
-        if (result != null) {
-            Instruction newInst = createConstantInstruction(result, cpgen);
-            InstructionHandle newHandle = list.insert(ha, newInst);
-            redirectTargets(ha, hb, current, newHandle);
-            try {
-                list.delete(ha, current);
-            } catch (TargetLostException e) {
-                handleTargetLost(e, newHandle);
-            }
-            return true;
-        }
-
-        return false;
-    }
-
-    private boolean foldFloatingComparison(Instruction inst, ConstantPoolGen cpgen, InstructionList list,
-            Stack<Number> valueStack, Stack<InstructionHandle> handleStack,
-            InstructionHandle current) {
-        if (valueStack.size() < 2 || current.getNext() == null)
-            return false;
-
-        Number b = valueStack.pop(), a = valueStack.pop();
-        InstructionHandle hb = handleStack.pop(), ha = handleStack.pop();
-        InstructionHandle next = current.getNext();
-        Instruction nextInst = next.getInstruction();
-
-        if (!(nextInst instanceof IfInstruction))
-            return false;
-
-        short opcode = ((IfInstruction) nextInst).getOpcode();
-        boolean result = evaluateFloatingComparison(inst, a, b);
-        boolean branch = evaluateComparison(result ? 1 : 0, opcode);
-
-        InstructionHandle target = ((IfInstruction) nextInst).getTarget();
-
-        Instruction newInst = branch ? new GOTO(target) : new NOP();
-        InstructionHandle newHandle = list.insert(ha, newInst);
-
-        redirectTargets(ha, hb, current, newHandle);
-        updateTargeters(next, branch ? target : newHandle);
-
-        try {
-            if (branch)
-                list.delete(ha, next);
-            else
-                list.delete(ha.getNext(), next);
-        } catch (TargetLostException e) {
-            handleTargetLost(e, branch ? target : next.getNext());
-        }
-
-        return true;
-    }
-
-    private boolean foldIntComparison(IfInstruction inst, ConstantPoolGen cpgen, InstructionList list,
-            Stack<Number> valueStack, Stack<InstructionHandle> handleStack,
-            InstructionHandle current) {
-        if (valueStack.size() < 2)
-            return false;
-
-        Number b = valueStack.pop(), a = valueStack.pop();
-        InstructionHandle hb = handleStack.pop(), ha = handleStack.pop();
-        boolean result = evaluateIntComparison(a.intValue(), b.intValue(), inst.getOpcode());
-        InstructionHandle newHandle;
-
-        if (result) {
-            GOTO gotoInst = new GOTO(inst.getTarget());
-            newHandle = list.insert(ha, gotoInst);
-        } else {
-            newHandle = current.getNext();
-        }
-
-        redirectTargets(ha, hb, current, newHandle);
-
-        try {
-            list.delete(ha, current);
-        } catch (TargetLostException e) {
-            handleTargetLost(e, newHandle);
-        }
-
-        return true;
-    }
-
-    private boolean isFloatingPointComparison(Instruction inst) {
-        return inst instanceof LCMP || inst instanceof FCMPG || inst instanceof FCMPL
-                || inst instanceof DCMPG || inst instanceof DCMPL;
-    }
-
-    private boolean evaluateFloatingComparison(Instruction inst, Number a, Number b) {
-        if (inst instanceof LCMP) {
-            return Long.compare(a.longValue(), b.longValue()) > 0;
-        } else if (inst instanceof FCMPG || inst instanceof FCMPL) {
-            if (Float.isNaN(a.floatValue()) || Float.isNaN(b.floatValue())) {
-                return inst instanceof FCMPG;
-            }
-            return Float.compare(a.floatValue(), b.floatValue()) > 0;
-        } else if (inst instanceof DCMPG || inst instanceof DCMPL) {
-            if (Double.isNaN(a.doubleValue()) || Double.isNaN(b.doubleValue())) {
-                return inst instanceof DCMPG;
-            }
-            return Double.compare(a.doubleValue(), b.doubleValue()) > 0;
-        }
-        return false;
-    }
-
-    private void updateTargeters(InstructionHandle from, InstructionHandle to) {
-        if (from.hasTargeters()) {
-            for (InstructionTargeter t : from.getTargeters()) {
-                t.updateTarget(from, to);
             }
         }
     }
@@ -789,244 +577,181 @@ public class ConstantFolder {
         return modified;
     }
 
-    // Dynamic variable foldin
-    private boolean old_dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
-        boolean modified = false;
+    private boolean dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
+        boolean optimizationApplied = false;
+        // We'll work with the current max locals count
+        int slotCounter = 0;
 
-        // map to track whether a variable might be constant
-        HashMap<Integer, Boolean> dynamicVars = new HashMap<>();
-        // map to record the literal constant value for a variable
-        HashMap<Integer, Number> literalValues = new HashMap<>();
-        // maps for tracking usage of variables
-        HashMap<Integer, Integer> loadCounts = new HashMap<>();
-        HashMap<Integer, List<InstructionHandle>> storeInstructions = new HashMap<>();
-
-        // first pass-> mark variables assigned via IINC or multiple stores as
-        // non-constant
-        for (InstructionHandle handle : instList.getInstructionHandles()) {
-            Instruction inst = handle.getInstruction();
-            if (inst instanceof IINC) {
+        // Find current max locals from the instruction list by inspecting variable indices
+        for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
+            Instruction inst = h.getInstruction();
+            if (inst instanceof LocalVariableInstruction) {
+                int idx = ((LocalVariableInstruction) inst).getIndex();
+                if (idx >= slotCounter) {
+                    slotCounter = idx + 1; // +1 because indices are 0-based
+                }
+            } else if (inst instanceof IINC) {
                 int idx = ((IINC) inst).getIndex();
-                dynamicVars.put(idx, false);
-            } else if (inst instanceof StoreInstruction) {
-                int idx = ((StoreInstruction) inst).getIndex();
-
-                if (dynamicVars.containsKey(idx)) {
-                    dynamicVars.put(idx, true);
-                } else {
-                    dynamicVars.put(idx, false);
-                }
-
-                // Track store instr
-                storeInstructions.computeIfAbsent(idx, k -> new ArrayList<>()).add(handle);
-            } else if (inst instanceof LoadInstruction) {
-                // Track load counts
-                int idx = ((LoadInstruction) inst).getIndex();
-                loadCounts.put(idx, loadCounts.getOrDefault(idx, 0) + 1);
-            }
-        }
-
-        // second pass-> record stores of possibly constant values
-        String pattern = "(DSTORE | FSTORE | ISTORE | LSTORE)";
-        InstructionFinder finder = new InstructionFinder(instList);
-        for (Iterator it = finder.search(pattern); it.hasNext();) {
-            InstructionHandle[] set = (InstructionHandle[]) it.next();
-            StoreInstruction store = (StoreInstruction) set[0].getInstruction();
-
-            InstructionHandle prev = set[0].getPrev();
-            if (prev != null && isConstantPushInstruction(prev.getInstruction())) {
-                PushInstruction push = (PushInstruction) prev.getInstruction();
-                int idx = store.getIndex();
-                if (dynamicVars.containsKey(idx) && dynamicVars.get(idx)) {
-                    Number val = getConstantValue((Instruction) push, cpgen);
-                    System.out.println("Dynamic variable folding: " + store + " " + push + " " + val);
-                    if (val == null)
-                        System.err.println("FATAL: Could not obtain literal value for unknown type");
-                    else
-                        literalValues.put(idx, val);
-                }
-            } else {
-
-            }
-
-        }
-
-        return modified;
-    }
-
-    private boolean dynamicFolding(ConstantPoolGen cpgen, InstructionList instList, MethodGen methodGen) {
-    boolean modified = false;
-    int maxLocals = methodGen.getMaxLocals();
-    HashMap<Integer, Integer> varMap = new HashMap<>();
-    
-    // Identify loop and branch bounds for safety checks
-    ArrayList<InstructionHandle> loopBounds = identifyLoopBounds(instList);
-    ArrayList<InstructionHandle> branchBounds = identifyBranchBounds(instList);
-    
-    // First pass: perform the dynamic folding
-    for (InstructionHandle ih = instList.getStart(); ih != null;) {
-        InstructionHandle next = ih.getNext();
-        Instruction inst = ih.getInstruction();
-
-        if (inst instanceof StoreInstruction && 
-            !variableChangesInBounds(ih, loopBounds) && 
-            !variableChangesInBounds(ih, branchBounds)) {
-            
-            int varIndex = ((StoreInstruction) inst).getIndex();
-            int newVarIndex;
-
-            if (varMap.containsKey(varIndex)) {
-                // If we've seen this variable before, create a new version
-                newVarIndex = maxLocals++;
-                modified = true;
-                
-                if (debug) {
-                    System.out.println("Dynamic folding: Variable " + varIndex + 
-                                     " renamed to " + newVarIndex + " at " + ih);
-                }
-            } else {
-                // First occurrence of this variable, use original index
-                newVarIndex = varIndex;
-            }
-            
-            varMap.put(varIndex, newVarIndex);
-            ((StoreInstruction) inst).setIndex(newVarIndex);
-        } 
-        else if (inst instanceof LoadInstruction) {
-            int varIndex = ((LoadInstruction) inst).getIndex();
-            if (varMap.containsKey(varIndex)) {
-                int newVarIndex = varMap.get(varIndex);
-                ((LoadInstruction) inst).setIndex(newVarIndex);
-                
-                if (debug && newVarIndex != varIndex) {
-                    System.out.println("Dynamic folding: Updated load of variable " + 
-                                     varIndex + " to " + newVarIndex + " at " + ih);
+                if (idx >= slotCounter) {
+                    slotCounter = idx + 1;
                 }
             }
         }
-        
-        ih = next;
-    }
-    
-    // Update method's max locals count if needed
-    if (maxLocals > methodGen.getMaxLocals()) {
-        methodGen.setMaxLocals(maxLocals);
-    }
-    
-    return modified;
-}
 
-/**
- * Determines if a variable is modified within loop or branch bounds.
- * This is crucial for safety - we don't rename variables that change within loops/branches.
- */
-private boolean variableChangesInBounds(InstructionHandle ih, ArrayList<InstructionHandle> bounds) {
-    // Get the variable index from the instruction
-    int variableIndex;
-    if (ih.getInstruction() instanceof LoadInstruction) {
-        variableIndex = ((LoadInstruction) ih.getInstruction()).getIndex();
-    } else if (ih.getInstruction() instanceof StoreInstruction) {
-        variableIndex = ((StoreInstruction) ih.getInstruction()).getIndex();
-    } else if (ih.getInstruction() instanceof IINC) { 
-        variableIndex = ((IINC) ih.getInstruction()).getIndex();
-    } else {
-        // Not a variable-related instruction
-        return false;
-    }
+        // Mapping from original variable indices to their versioned indices
+        Map<Integer, Integer> slotMapping = new HashMap<>();
 
-    // Check each bound pair (start, end)
-    for (int i = 0; i < bounds.size(); i += 2) {
-        if (i + 1 >= bounds.size()) break; // Safety check
-        
-        InstructionHandle start = bounds.get(i);
-        InstructionHandle end = bounds.get(i + 1);
-        
-        // Only check bounds that contain our instruction
-        if (start.getPosition() <= ih.getPosition() && ih.getPosition() <= end.getPosition()) {
-            // Iterate through instructions in the bounds
-            for (InstructionHandle current = start; current != end.getNext(); current = current.getNext()) {
-                if (current == null) break; // Safety check
-                
-                Instruction currentInstruction = current.getInstruction();
-                if (currentInstruction instanceof StoreInstruction) {
-                    if (((StoreInstruction) currentInstruction).getIndex() == variableIndex) {
-                        if (debug) {
-                            System.out.println("Variable " + variableIndex + " modified by " + 
-                                              currentInstruction + " within bounds");
-                        }
-                        return true;  
-                    } 
-                } else if (currentInstruction instanceof IINC) {
-                    if (((IINC) currentInstruction).getIndex() == variableIndex) {
-                        if (debug) {
-                            System.out.println("Variable " + variableIndex + " incremented by " + 
-                                              currentInstruction + " within bounds");
-                        }
-                        return true;
+        // Safety: Collect regions where variable renaming is dangerous
+        // First, identify loop structures (backward branches)
+        List<int[]> loopBoundaryPositions = new ArrayList<>();
+        // Then, identify branch structures (if/else blocks)
+        List<int[]> branchBoundaryPositions = new ArrayList<>();
+
+        // Scan for loops (backward branches indicate loops)
+        for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
+            if (h.getInstruction() instanceof BranchInstruction) {
+                InstructionHandle dest = ((BranchInstruction) h.getInstruction()).getTarget();
+                // If target position is earlier than current position, it's a loop
+                if (dest.getPosition() < h.getPosition()) {
+                    int[] loopRegion = {dest.getPosition(), h.getPosition()};
+                    loopBoundaryPositions.add(loopRegion);
+                    if (debug) {
+                        System.out.println("Loop found: " + dest.getPosition() + "-" + h.getPosition());
                     }
                 }
             }
         }
-    }
-    return false;
-}
 
-/**
- * Identifies loop boundaries in the instruction list.
- * Returns pairs of handles (start, end) for each loop.
- */
-private ArrayList<InstructionHandle> identifyLoopBounds(InstructionList instList) {
-    ArrayList<InstructionHandle> bounds = new ArrayList<>();
-    InstructionHandle[] handles = instList.getInstructionHandles();
-    
-    // A simple heuristic: backward branches usually indicate loops
-    for (InstructionHandle ih : handles) {
-        Instruction inst = ih.getInstruction();
-        if (inst instanceof BranchInstruction) {
-            InstructionHandle target = ((BranchInstruction) inst).getTarget();
-            // If branch target is before current instruction, it's likely a loop
-            if (target.getPosition() < ih.getPosition()) {
-                // Add loop start and end to bounds
-                bounds.add(target);
-                bounds.add(ih);
-                
-                if (debug) {
-                    System.out.println("Identified loop: " + target.getPosition() + 
-                                     " to " + ih.getPosition());
+        // Scan for branches (if statements that aren't GOTOs)
+        for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
+            if (h.getInstruction() instanceof IfInstruction &&
+                !(h.getInstruction() instanceof GOTO)) {
+                InstructionHandle target = ((IfInstruction) h.getInstruction()).getTarget();
+                if (h.getNext() != null && target.getPrev() != null) {
+                    int[] branchRegion = {h.getNext().getPosition(), target.getPrev().getPosition()};
+                    branchBoundaryPositions.add(branchRegion);
+                    if (debug) {
+                        System.out.println("Branch found: " + h.getNext().getPosition() +
+                                        "-" + target.getPrev().getPosition());
+                    }
                 }
             }
         }
-    }
-    
-    return bounds;
-}
 
-/**
- * Identifies branch boundaries (if/else blocks) in the instruction list.
- * Returns pairs of handles (start, end) for each branch block.
- */
-private ArrayList<InstructionHandle> identifyBranchBounds(InstructionList instList) {
-    ArrayList<InstructionHandle> bounds = new ArrayList<>();
-    InstructionHandle[] handles = instList.getInstructionHandles();
-    
-    // Basic approach: conditional branches usually indicate if/else blocks
-    for (InstructionHandle ih : handles) {
-        Instruction inst = ih.getInstruction();
-        if (inst instanceof IfInstruction && !(inst instanceof GOTO)) {
-            InstructionHandle target = ((IfInstruction) inst).getTarget();
-            // Add branch start and end to bounds
-            bounds.add(ih.getNext());
-            bounds.add(target.getPrev());
-            
-            if (debug) {
-                System.out.println("Identified branch: " + ih.getNext().getPosition() + 
-                                 " to " + target.getPrev().getPosition());
+        // Main processing loop - examine each instruction
+        for (InstructionHandle currentInst = instList.getStart(); currentInst != null;) {
+            InstructionHandle nextInst = currentInst.getNext();
+            Instruction instruction = currentInst.getInstruction();
+            int currentPosition = currentInst.getPosition();
+
+            // STORE instructions - candidates for creating new versions
+            if (instruction instanceof StoreInstruction) {
+                int originalSlot = ((StoreInstruction) instruction).getIndex();
+
+                // Safety check: Is this variable modified in a loop or branch?
+                boolean isUnsafe = false;
+
+                // Check each loop boundary
+                for (int[] loopRegion : loopBoundaryPositions) {
+                    // Only if our current instruction is within this loop
+                    if (currentPosition >= loopRegion[0] && currentPosition <= loopRegion[1]) {
+                        // Check every instruction in the loop for modifications
+                        for (InstructionHandle scanInst = instList.getStart();
+                            scanInst != null;
+                            scanInst = scanInst.getNext()) {
+
+                            int scanPosition = scanInst.getPosition();
+                            if (scanPosition >= loopRegion[0] && scanPosition <= loopRegion[1]) {
+                                Instruction scanInstruction = scanInst.getInstruction();
+                                // Check if this instruction modifies our variable
+                                if ((scanInstruction instanceof StoreInstruction &&
+                                    ((StoreInstruction) scanInstruction).getIndex() == originalSlot) ||
+                                    (scanInstruction instanceof IINC &&
+                                    ((IINC) scanInstruction).getIndex() == originalSlot)) {
+                                    isUnsafe = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (isUnsafe) break;
+                    }
+                }
+
+                // Check each branch boundary if not already unsafe
+                if (!isUnsafe) {
+                    for (int[] branchRegion : branchBoundaryPositions) {
+                        // Only if our current instruction is within this branch
+                        if (currentPosition >= branchRegion[0] && currentPosition <= branchRegion[1]) {
+                            // Check every instruction in the branch for modifications
+                            for (InstructionHandle scanInst = instList.getStart();
+                                scanInst != null;
+                                scanInst = scanInst.getNext()) {
+
+                                int scanPosition = scanInst.getPosition();
+                                if (scanPosition >= branchRegion[0] && scanPosition <= branchRegion[1]) {
+                                    Instruction scanInstruction = scanInst.getInstruction();
+                                    // Check if this instruction modifies our variable
+                                    if ((scanInstruction instanceof StoreInstruction &&
+                                        ((StoreInstruction) scanInstruction).getIndex() == originalSlot) ||
+                                        (scanInstruction instanceof IINC &&
+                                        ((IINC) scanInstruction).getIndex() == originalSlot)) {
+                                        isUnsafe = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (isUnsafe) break;
+                        }
+                    }
+                }
+
+                // If it's safe to rename this variable
+                if (!isUnsafe) {
+                    int newSlot;
+
+                    // If we've seen this variable before, give it a new slot
+                    if (slotMapping.containsKey(originalSlot)) {
+                        newSlot = slotCounter++;
+                        optimizationApplied = true;
+
+                        if (debug) {
+                            System.out.println("Versioning variable " + originalSlot +
+                                            " to new slot " + newSlot +
+                                            " at position " + currentPosition);
+                        }
+                    } else {
+                        // First time seeing this variable
+                        newSlot = originalSlot;
+                    }
+
+                    // Update the map and the instruction
+                    slotMapping.put(originalSlot, newSlot);
+                    ((StoreInstruction) instruction).setIndex(newSlot);
+                }
             }
+            // LOAD instructions - update to use the correct version
+            else if (instruction instanceof LoadInstruction) {
+                int originalSlot = ((LoadInstruction) instruction).getIndex();
+
+                // If we have a mapping for this variable, update the load
+                if (slotMapping.containsKey(originalSlot)) {
+                    int mappedSlot = slotMapping.get(originalSlot);
+                    ((LoadInstruction) instruction).setIndex(mappedSlot);
+
+                    if (debug && mappedSlot != originalSlot) {
+                        System.out.println("Updated LOAD from slot " + originalSlot +
+                                        " to " + mappedSlot +
+                                        " at position " + currentPosition);
+                    }
+                }
+            }
+
+            // Move to next instruction
+            currentInst = nextInst;
         }
+
+        return optimizationApplied;
     }
-    
-    return bounds;
-}
 
     private boolean removeUselessGOTO(InstructionList instList) {
         boolean modified = false;
