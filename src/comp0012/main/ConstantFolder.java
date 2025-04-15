@@ -200,10 +200,6 @@ public class ConstantFolder {
                 (inst instanceof DCONST);
     }
 
-    // checks if arithmetic operation
-    private boolean isArithmeticInstruction(Instruction inst) {
-        return (inst instanceof ArithmeticInstruction);
-    }
 
     // gets constant value from instruction.
     private Number getConstantValue(Instruction inst, ConstantPoolGen cpg) {
@@ -427,13 +423,13 @@ public class ConstantFolder {
                     }
                 }
 
-                instructionList.insert(set[0], r);
+                InstructionHandle newHandle = instructionList.insert(set[0], r);
 
-                safeDelete(instructionList, set[0], set[0].getPrev());
-                safeDelete(instructionList, set[1], set[0].getPrev());
-                safeDelete(instructionList, set[2], set[0].getPrev());
+                safeDelete(instructionList, set[0], newHandle);
+                safeDelete(instructionList, set[1], newHandle);
+                safeDelete(instructionList, set[2], newHandle);
                 if (set.length == 4) {
-                    safeDelete(instructionList, set[3], set[0].getPrev());
+                    safeDelete(instructionList, set[3], newHandle);
                 }
 
                 modified = true;
