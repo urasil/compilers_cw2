@@ -589,13 +589,9 @@ public class ConstantFolder {
     // CONSTANT VARIABLE FOLDING
     private boolean constantVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
-        // map to track whether a variable might be constant
+
         HashMap<Integer, Boolean> constantVars = new HashMap<>();
-        // map to record the literal constant value for a variable
         HashMap<Integer, Number> literalValues = new HashMap<>();
-        // maps for tracking usage of variables
-        HashMap<Integer, Integer> loadCounts = new HashMap<>();
-        HashMap<Integer, List<InstructionHandle>> storeInstructions = new HashMap<>();
 
         // first pass-> mark variables assigned via IINC or multiple stores as
         // non-constant
@@ -611,12 +607,6 @@ public class ConstantFolder {
                 else
                     constantVars.put(idx, false);
 
-                // Track store instr
-                storeInstructions.computeIfAbsent(idx, k -> new ArrayList<>()).add(handle);
-            } else if (inst instanceof LoadInstruction) {
-                // Track load counts
-                int idx = ((LoadInstruction) inst).getIndex();
-                loadCounts.put(idx, loadCounts.getOrDefault(idx, 0) + 1);
             }
         }
 
