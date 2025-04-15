@@ -5,9 +5,11 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Stack;
 
 import org.apache.bcel.Constants;
@@ -781,31 +783,6 @@ public class ConstantFolder {
             }
         }
 
-
-        // sixth pas-> remove dead stores (stores to variables that are never loaded)
-        for (Integer varIndex : storeInstructions.keySet()) {
-            if (loadCounts.getOrDefault(varIndex, 0) == 0) {
-                for (InstructionHandle storeHandle : storeInstructions.get(varIndex)) {
-                    try {
-                        // Also try to remove the instruction that produced the stored value
-                        InstructionHandle prev = storeHandle.getPrev();
-                        if (prev != null && isConstantPushInstruction(prev.getInstruction())) {
-                            instList.delete(prev, storeHandle);
-                        } else {
-                            instList.delete(storeHandle);
-                        }
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        for (InstructionHandle target : e.getTargets()) {
-                            for (InstructionTargeter targeter : target.getTargeters()) {
-                                targeter.updateTarget(target, storeHandle.getNext());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         return modified;
     }
 
@@ -819,8 +796,72 @@ public class ConstantFolder {
     // Remove unreachable code
     private boolean removeUnreachableCode(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
-        InstructionFinder finder = new InstructionFinder(instList);
-        
+
+        // gather loads and stores by index
+        Map<Integer, List<InstructionHandle>> loadsByVar = new HashMap<>();
+        Map<Integer, List<InstructionHandle>> storesByVar = new HashMap<>();
+
+        for (InstructionHandle ih : instList.getInstructionHandles()) {
+            Instruction inst = ih.getInstruction();
+            if (inst instanceof LoadInstruction) {
+                int idx = ((LoadInstruction) inst).getIndex();
+                loadsByVar.computeIfAbsent(idx, k -> new ArrayList<>()).add(ih);
+            } else if (inst instanceof StoreInstruction) {
+                int idx = ((StoreInstruction) inst).getIndex();
+                storesByVar.computeIfAbsent(idx, k -> new ArrayList<>()).add(ih);
+            }
+        }
+
+        if(debug){
+            System.out.println("Load instructions: " + loadsByVar);
+            System.out.println("Store instructions: " + storesByVar);
+        }
+
+        // check if each store is used before the next store overwrites it
+        for (Map.Entry<Integer, List<InstructionHandle>> entry : storesByVar.entrySet()) {
+            int varIndex = entry.getKey();
+            List<InstructionHandle> storeHandles = entry.getValue();
+            List<InstructionHandle> loadHandles = loadsByVar.getOrDefault(varIndex, new ArrayList<>());
+
+            // process them in linear order
+            storeHandles.sort(Comparator.comparingInt(h -> h.getPosition()));
+            loadHandles.sort(Comparator.comparingInt(h -> h.getPosition()));
+
+            for (int i = 0; i < storeHandles.size(); i++) {
+                InstructionHandle storeIH = storeHandles.get(i);
+                int storePos = storeIH.getPosition();
+
+                // next store overwrites variable
+                InstructionHandle nextStoreIH = (i + 1 < storeHandles.size()) ? storeHandles.get(i + 1) : null;
+                int nextStorePos = (nextStoreIH == null) ? Integer.MAX_VALUE : nextStoreIH.getPosition();
+
+                // check for load between storePos and nextStorePos
+                boolean used = false;
+                for (InstructionHandle loadIH : loadHandles) {
+                    int loadPos = loadIH.getPosition();
+                    if (loadPos > storePos && loadPos < nextStorePos) {
+                        used = true;
+                        break;
+                    }
+                }
+
+                // remove this store
+                if (!used) {
+                    try {
+                        // remove a constant push right before the store if it only served this store
+                        InstructionHandle prev = storeIH.getPrev();
+                        if (prev != null && isConstantPushInstruction(prev.getInstruction())) {
+                            instList.delete(prev);
+                        }
+                        instList.delete(storeIH);
+                        modified = true;
+                    } catch (TargetLostException e) {
+                        handleTargetLost(e, storeIH.getNext());
+                    }
+                }
+            }
+        }
+
         return modified;
     }
 
