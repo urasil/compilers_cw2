@@ -100,20 +100,6 @@ public class ConstantFolder {
             throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
         }
     }
-    
-    // int comparisons
-    private boolean isIntComparison(short opcode) {
-        if (opcode == Constants.IF_ICMPEQ ||
-            opcode == Constants.IF_ICMPNE ||
-            opcode == Constants.IF_ICMPLT ||
-            opcode == Constants.IF_ICMPLE ||
-            opcode == Constants.IF_ICMPGT ||
-            opcode == Constants.IF_ICMPGE) {
-            return true;
-        } else {
-            return false;
-        }
-    }
 
     private boolean evaluateIntComparison(int a, int b, short opcode) {
         if (opcode == Constants.IF_ICMPEQ) {
@@ -145,44 +131,6 @@ public class ConstantFolder {
         }
     }
 
-    // check for conversion instr instances
-    private boolean isConversionInstruction(Instruction inst) {
-        return inst instanceof ConversionInstruction;
-    }
-
-    // do i2l, etc
-    private Number performConversion(Number value, Instruction convInst) {
-        String opName = convInst.getName().toUpperCase();
-
-        if ("I2L".equals(opName)) {
-            return value.longValue();
-        } else if ("I2F".equals(opName)) {
-            return value.floatValue();
-        } else if ("I2D".equals(opName)) {
-            return value.doubleValue();
-        } else if ("L2I".equals(opName)) {
-            return value.intValue();
-        } else if ("L2F".equals(opName)) {
-            return value.floatValue();
-        } else if ("L2D".equals(opName)) {
-            return value.doubleValue();
-        } else if ("F2I".equals(opName)) {
-            return (int) value.floatValue();
-        } else if ("F2L".equals(opName)) {
-            return (long) value.floatValue();
-        } else if ("F2D".equals(opName)) {
-            return value.doubleValue();
-        } else if ("D2I".equals(opName)) {
-            return (int) value.doubleValue();
-        } else if ("D2L".equals(opName)) {
-            return (long) value.doubleValue();
-        } else if ("D2F".equals(opName)) {
-            return (float) value.doubleValue();
-        } else {
-            return null;
-        }
-    }
-
     // checks if the instruction pushes a constant value to the stack
     private boolean isConstantPushInstruction(Instruction inst) {
         return (inst instanceof LDC) ||
@@ -194,7 +142,6 @@ public class ConstantFolder {
                 (inst instanceof LCONST) ||
                 (inst instanceof DCONST);
     }
-
 
     // gets constant value from instruction.
     private Number getConstantValue(Instruction inst, ConstantPoolGen cpg) {
@@ -222,31 +169,6 @@ public class ConstantFolder {
             return ((DCONST) inst).getValue();
         }
         return null;
-    }
-
-    // redirects targets from old instruction to the new one
-    private void redirectTargets(InstructionHandle h1, InstructionHandle h2,
-            InstructionHandle h3, InstructionHandle newHandle) {
-        if (h1.hasTargeters()) {
-            InstructionTargeter[] targeters = h1.getTargeters();
-            for (InstructionTargeter targeter : targeters) {
-                targeter.updateTarget(h1, newHandle);
-            }
-        }
-
-        if (h2.hasTargeters()) {
-            InstructionTargeter[] targeters = h2.getTargeters();
-            for (InstructionTargeter targeter : targeters) {
-                targeter.updateTarget(h2, newHandle);
-            }
-        }
-
-        if (h3.hasTargeters()) {
-            InstructionTargeter[] targeters = h3.getTargeters();
-            for (InstructionTargeter targeter : targeters) {
-                targeter.updateTarget(h3, newHandle);
-            }
-        }
     }
 
     // computes operation
@@ -448,140 +370,6 @@ public class ConstantFolder {
             for (InstructionHandle branchingInstruction : e.getTargets()) {
                 for (InstructionTargeter targeter : branchingInstruction.getTargeters())
                     targeter.updateTarget(branchingInstruction, newTarget);
-            }
-        }
-    }
-
-    private void applyConversion(Instruction inst, Stack<Number> valueStack, Stack<InstructionHandle> handleStack) {
-        if (!valueStack.isEmpty()) {
-            Number value = valueStack.pop();
-            InstructionHandle handle = handleStack.pop();
-            Number converted = performConversion(value, inst);
-            if (converted != null) {
-                valueStack.push(converted);
-                handleStack.push(handle);
-            }
-        }
-    }
-
-    private boolean foldArithmetic(Instruction inst, ConstantPoolGen cpgen, InstructionList list,
-            Stack<Number> valueStack, Stack<InstructionHandle> handleStack,
-            InstructionHandle current) {
-        if (valueStack.size() < 2)
-            return false;
-
-        Number b = valueStack.pop(), a = valueStack.pop();
-        InstructionHandle hb = handleStack.pop(), ha = handleStack.pop();
-        Number result = computeArithmeticResult(a, b, inst);
-
-        if (result != null) {
-            Instruction newInst = createConstantInstruction(result, cpgen);
-            InstructionHandle newHandle = list.insert(ha, newInst);
-            redirectTargets(ha, hb, current, newHandle);
-            try {
-                list.delete(ha, current);
-            } catch (TargetLostException e) {
-                handleTargetLost(e, newHandle);
-            }
-            return true;
-        }
-
-        return false;
-    }
-
-    private boolean foldFloatingComparison(Instruction inst, ConstantPoolGen cpgen, InstructionList list,
-            Stack<Number> valueStack, Stack<InstructionHandle> handleStack,
-            InstructionHandle current) {
-        if (valueStack.size() < 2 || current.getNext() == null)
-            return false;
-
-        Number b = valueStack.pop(), a = valueStack.pop();
-        InstructionHandle hb = handleStack.pop(), ha = handleStack.pop();
-        InstructionHandle next = current.getNext();
-        Instruction nextInst = next.getInstruction();
-
-        if (!(nextInst instanceof IfInstruction))
-            return false;
-
-        short opcode = ((IfInstruction) nextInst).getOpcode();
-        boolean result = evaluateFloatingComparison(inst, a, b);
-        boolean branch = evaluateComparison(result ? 1 : 0, opcode);
-
-        InstructionHandle target = ((IfInstruction) nextInst).getTarget();
-
-        Instruction newInst = branch ? new GOTO(target) : new NOP();
-        InstructionHandle newHandle = list.insert(ha, newInst);
-
-        redirectTargets(ha, hb, current, newHandle);
-        updateTargeters(next, branch ? target : newHandle);
-
-        try {
-            if (branch)
-                list.delete(ha, next);
-            else
-                list.delete(ha.getNext(), next);
-        } catch (TargetLostException e) {
-            handleTargetLost(e, branch ? target : next.getNext());
-        }
-
-        return true;
-    }
-
-    private boolean foldIntComparison(IfInstruction inst, ConstantPoolGen cpgen, InstructionList list,
-            Stack<Number> valueStack, Stack<InstructionHandle> handleStack,
-            InstructionHandle current) {
-        if (valueStack.size() < 2)
-            return false;
-
-        Number b = valueStack.pop(), a = valueStack.pop();
-        InstructionHandle hb = handleStack.pop(), ha = handleStack.pop();
-        boolean result = evaluateIntComparison(a.intValue(), b.intValue(), inst.getOpcode());
-        InstructionHandle newHandle;
-
-        if (result) {
-            GOTO gotoInst = new GOTO(inst.getTarget());
-            newHandle = list.insert(ha, gotoInst);
-        } else {
-            newHandle = current.getNext();
-        }
-
-        redirectTargets(ha, hb, current, newHandle);
-
-        try {
-            list.delete(ha, current);
-        } catch (TargetLostException e) {
-            handleTargetLost(e, newHandle);
-        }
-
-        return true;
-    }
-
-    private boolean isFloatingPointComparison(Instruction inst) {
-        return inst instanceof LCMP || inst instanceof FCMPG || inst instanceof FCMPL
-                || inst instanceof DCMPG || inst instanceof DCMPL;
-    }
-
-    private boolean evaluateFloatingComparison(Instruction inst, Number a, Number b) {
-        if (inst instanceof LCMP) {
-            return Long.compare(a.longValue(), b.longValue()) > 0;
-        } else if (inst instanceof FCMPG || inst instanceof FCMPL) {
-            if (Float.isNaN(a.floatValue()) || Float.isNaN(b.floatValue())) {
-                return inst instanceof FCMPG;
-            }
-            return Float.compare(a.floatValue(), b.floatValue()) > 0;
-        } else if (inst instanceof DCMPG || inst instanceof DCMPL) {
-            if (Double.isNaN(a.doubleValue()) || Double.isNaN(b.doubleValue())) {
-                return inst instanceof DCMPG;
-            }
-            return Double.compare(a.doubleValue(), b.doubleValue()) > 0;
-        }
-        return false;
-    }
-
-    private void updateTargeters(InstructionHandle from, InstructionHandle to) {
-        if (from.hasTargeters()) {
-            for (InstructionTargeter t : from.getTargeters()) {
-                t.updateTarget(from, to);
             }
         }
     }
@@ -974,7 +762,6 @@ public class ConstantFolder {
 
         return optimizationApplied;
     }
-
 
     private boolean removeUselessGOTO(InstructionList instList) {
         boolean modified = false;
