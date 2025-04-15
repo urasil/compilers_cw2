@@ -11,10 +11,13 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Queue;
+import java.util.LinkedList;
 
 import org.apache.bcel.Constants;
 import org.apache.bcel.classfile.ClassParser;
-import org.apache.bcel.classfile.Constant;
 import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.classfile.Method;
 import org.apache.bcel.generic.*;
@@ -63,7 +66,9 @@ public class ConstantFolder {
                 modified |= simpleFolding(cpgen, instList);
                 modified |= constantVariableFolding(cpgen, instList);
                 modified |= dynamicVariableFolding(cpgen, instList);
-                modified |= removeUnreachableCode(cpgen, instList);
+                modified |= removeUnsedLoads(cpgen, instList);
+                modified |= removeDeadCode(cpgen, instList);
+                modified |= removeUselessGOTO(instList);
             }
 
             instList.setPositions(true);
@@ -390,14 +395,14 @@ public class ConstantFolder {
         String pattern = "PushInstruction PushInstruction (ConversionInstruction)? ArithmeticInstruction";
 
         for (Iterator it = finder.search(pattern); it.hasNext();) {
-            
+
             InstructionHandle[] set = (InstructionHandle[]) it.next();
-            
+
             Instruction inst1 = set[0].getInstruction();
             Instruction inst2 = set[1].getInstruction();
             Instruction inst3 = set[2].getInstruction();
             Instruction arithmeticInst = inst3;
-            
+
             if (set.length == 4) {
                 arithmeticInst = set[3].getInstruction();
             }
@@ -412,11 +417,13 @@ public class ConstantFolder {
             Number res = computeArithmeticResult(val1, val2, arithmeticInst);
             if (res != null) {
                 Instruction r = createConstantInstruction(res, cpgen);
-                if(debug){
-                    if(set.length == 4){
-                        System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ inst3 + " "+ arithmeticInst.getName() + " => " + r);
-                    }else{
-                        System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ arithmeticInst.getName() + " => " + r);
+                if (debug) {
+                    if (set.length == 4) {
+                        System.out.println("Folding: " + inst1 + " (" + val1 + ")" + " " + inst2 + " (" + val2 + ")"
+                                + " " + inst3 + " " + arithmeticInst.getName() + " => " + r);
+                    } else {
+                        System.out.println("Folding: " + inst1 + " (" + val1 + ")" + " " + inst2 + " (" + val2 + ")"
+                                + " " + arithmeticInst.getName() + " => " + r);
                     }
                 }
 
@@ -438,12 +445,12 @@ public class ConstantFolder {
 
     private void safeDelete(InstructionList l, InstructionHandle handle, InstructionHandle newTarget) {
         try {
-            if(debug){
+            if (debug) {
                 System.out.println("Deleting: " + handle);
             }
             l.delete(handle);
         } catch (TargetLostException e) { // if a GOTO / cjumps to the deleted instruction
-            if(debug){
+            if (debug) {
                 System.out.println("Target lost: " + handle + " -> " + newTarget);
             }
             for (InstructionHandle branchingInstruction : e.getTargets()) {
@@ -509,7 +516,7 @@ public class ConstantFolder {
         boolean branch = evaluateComparison(result ? 1 : 0, opcode);
 
         InstructionHandle target = ((IfInstruction) nextInst).getTarget();
-        
+
         Instruction newInst = branch ? new GOTO(target) : new NOP();
         InstructionHandle newHandle = list.insert(ha, newInst);
 
@@ -671,8 +678,6 @@ public class ConstantFolder {
             }
         }
 
-
-
         // fourth pass-> find comparison patterns where both operands are constants
         String comparisonPattern = "(LDC | LDC2_W | ConstantPushInstruction) (LDC | LDC2_W | ConstantPushInstruction) (IF_ICMPLT | IF_ICMPGT | IF_ICMPLE | IF_ICMPGE | IF_ICMPEQ | IF_ICMPNE)";
         for (Iterator it = finder.search(comparisonPattern); it.hasNext();) {
@@ -685,20 +690,22 @@ public class ConstantFolder {
                 boolean result = evaluateIntComparison(val1.intValue(), val2.intValue(), ifInst.getOpcode());
 
                 InstructionHandle newHandle = set[0].getPrev();
-                if(result){
+                if (result) {
                     BranchInstruction newInst = new GOTO(ifInst.getTarget());
                     newHandle = instList.insert(set[0], newInst);
-                    if(debug){
-                        System.out.println("Folding: " + set[0].getInstruction() + " ("+val1+")"+" " + set[1].getInstruction() + " ("+val2+")" + " "+ ifInst.getName() + " => " + newInst);
+                    if (debug) {
+                        System.out.println("Folding: " + set[0].getInstruction() + " (" + val1 + ")" + " "
+                                + set[1].getInstruction() + " (" + val2 + ")" + " " + ifInst.getName() + " => "
+                                + newInst);
                     }
-                }      
-                
+                }
+
                 safeDelete(instList, set[0], newHandle);
                 safeDelete(instList, set[1], newHandle);
                 safeDelete(instList, set[2], newHandle);
 
                 modified = true;
-                           
+
             }
         }
 
@@ -716,12 +723,14 @@ public class ConstantFolder {
 
                 // Replace with either GOTO or NOP depending on the result
                 InstructionHandle newHandle = set[0].getPrev();
-                if (branch){
+                if (branch) {
                     BranchInstruction newInst = new GOTO(ifInst.getTarget());
                     newHandle = instList.insert(set[0], newInst);
 
-                    if(debug){
-                        System.out.println("Folding: " + set[0].getInstruction() + " ("+val1+")"+" " + set[1].getInstruction() + " ("+val2+")" + " LCMP "+ ifInst.getName() + " => " + newInst);
+                    if (debug) {
+                        System.out.println("Folding: " + set[0].getInstruction() + " (" + val1 + ")" + " "
+                                + set[1].getInstruction() + " (" + val2 + ")" + " LCMP " + ifInst.getName() + " => "
+                                + newInst);
                         System.out.println("Adding: " + newInst);
                     }
                 }
@@ -730,9 +739,9 @@ public class ConstantFolder {
                 safeDelete(instList, set[1], newHandle);
                 safeDelete(instList, set[2], newHandle);
                 safeDelete(instList, set[3], newHandle);
-                
+
                 modified = true;
-                
+
             }
         }
 
@@ -820,9 +829,9 @@ public class ConstantFolder {
             } else if (inst instanceof StoreInstruction) {
                 int idx = ((StoreInstruction) inst).getIndex();
 
-                if (dynamicVars.containsKey(idx)){
+                if (dynamicVars.containsKey(idx)) {
                     dynamicVars.put(idx, true);
-                }else{
+                } else {
                     dynamicVars.put(idx, false);
                 }
 
@@ -854,22 +863,99 @@ public class ConstantFolder {
                     else
                         literalValues.put(idx, val);
                 }
-            }else{
+            } else {
 
             }
 
-
-
-
-            
         }
 
         return modified;
     }
 
+    private boolean removeUselessGOTO(InstructionList instList) {
+        boolean modified = false;
+        InstructionHandle[] handles = instList.getInstructionHandles();
+
+        for (int i = 0; i < handles.length; i++) {
+            InstructionHandle handle = handles[i];
+            Instruction inst = handle.getInstruction();
+            if (inst instanceof GOTO) {
+                GOTO g = (GOTO) inst;
+                InstructionHandle target = g.getTarget();
+                // remove this goto if it points to next instruction anyways
+                if (target.getPosition() == handle.getNext().getPosition()) {
+                    try {
+                        instList.delete(handle);
+                        modified = true;
+                    } catch (TargetLostException e) {
+                        handleTargetLost(e, handle.getNext());
+                    }
+                }
+
+            }
+        }
+        return modified;
+    }
+
+    private boolean removeDeadCode(ConstantPoolGen cpgen, InstructionList instList) {
+        boolean modified = false;
+        InstructionHandle[] handles = instList.getInstructionHandles();
+
+        Set<InstructionHandle> alive = new HashSet<>();
+        Queue<InstructionHandle> toProcess = new LinkedList<>();
+
+        // STart
+        if (handles.length > 0) {
+            toProcess.add(handles[0]);
+        }
+
+        // BFS
+        while (!toProcess.isEmpty()) {
+            InstructionHandle current = toProcess.poll();
+
+            if (alive.contains(current)) {
+                continue;
+            }
+
+            alive.add(current);
+            Instruction inst = current.getInstruction();
+
+            // Handle regular flow
+            if (!(inst instanceof BranchInstruction) || inst instanceof ReturnInstruction) {
+                if (current.getNext() != null) {
+                    toProcess.add(current.getNext());
+                }
+            }
+
+            // Handle jumps
+            if (inst instanceof BranchInstruction) {
+                BranchInstruction branch = (BranchInstruction) inst;
+                toProcess.add(branch.getTarget());
+
+                // cjumps
+                if (inst instanceof IfInstruction && !(inst instanceof GOTO)) {
+                    if (current.getNext() != null) {
+                        toProcess.add(current.getNext());
+                    }
+                }
+            }
+        }
+
+        InstructionHandle current = instList.getStart();
+        while (current != null) {
+            InstructionHandle next = current.getNext();
+            if (!alive.contains(current)) {
+                safeDelete(instList, current, current.getPrev());
+                modified = true;
+            }
+            current = next;
+        }
+
+        return modified;
+    }
 
     // Remove unreachable code
-    private boolean removeUnreachableCode(ConstantPoolGen cpgen, InstructionList instList) {
+    private boolean removeUnsedLoads(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
 
         // gather loads and stores by index
@@ -887,7 +973,7 @@ public class ConstantFolder {
             }
         }
 
-        if(verbose){
+        if (verbose) {
             System.out.println("Load instructions: " + loadsByVar);
             System.out.println("Store instructions: " + storesByVar);
         }
@@ -939,7 +1025,6 @@ public class ConstantFolder {
 
         return modified;
     }
-
 
     public void write(String optimisedFilePath) {
         this.optimize();
