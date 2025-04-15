@@ -65,7 +65,7 @@ public class ConstantFolder {
 
                 modified |= simpleFolding(cpgen, instList);
                 modified |= constantVariableFolding(cpgen, instList);
-                modified |= dynamicVariableFolding(cpgen, instList);
+		modified |= dynamicFolding(cpgen, instList, methodGen);
                 modified |= removeUnsedLoads(cpgen, instList);
                 modified |= removeDeadCode(cpgen, instList);
                 modified |= removeUselessGOTO(instList);
@@ -800,7 +800,7 @@ public class ConstantFolder {
     }
 
     // Dynamic variable foldin
-    private boolean dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
+    private boolean old_dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
 
         // map to track whether a variable might be constant
@@ -863,6 +863,180 @@ public class ConstantFolder {
 
         return modified;
     }
+
+    private boolean dynamicFolding(ConstantPoolGen cpgen, InstructionList instList, MethodGen methodGen) {
+    boolean modified = false;
+    int maxLocals = methodGen.getMaxLocals();
+    HashMap<Integer, Integer> varMap = new HashMap<>();
+    
+    // Identify loop and branch bounds for safety checks
+    ArrayList<InstructionHandle> loopBounds = identifyLoopBounds(instList);
+    ArrayList<InstructionHandle> branchBounds = identifyBranchBounds(instList);
+    
+    // First pass: perform the dynamic folding
+    for (InstructionHandle ih = instList.getStart(); ih != null;) {
+        InstructionHandle next = ih.getNext();
+        Instruction inst = ih.getInstruction();
+
+        if (inst instanceof StoreInstruction && 
+            !variableChangesInBounds(ih, loopBounds) && 
+            !variableChangesInBounds(ih, branchBounds)) {
+            
+            int varIndex = ((StoreInstruction) inst).getIndex();
+            int newVarIndex;
+
+            if (varMap.containsKey(varIndex)) {
+                // If we've seen this variable before, create a new version
+                newVarIndex = maxLocals++;
+                modified = true;
+                
+                if (debug) {
+                    System.out.println("Dynamic folding: Variable " + varIndex + 
+                                     " renamed to " + newVarIndex + " at " + ih);
+                }
+            } else {
+                // First occurrence of this variable, use original index
+                newVarIndex = varIndex;
+            }
+            
+            varMap.put(varIndex, newVarIndex);
+            ((StoreInstruction) inst).setIndex(newVarIndex);
+        } 
+        else if (inst instanceof LoadInstruction) {
+            int varIndex = ((LoadInstruction) inst).getIndex();
+            if (varMap.containsKey(varIndex)) {
+                int newVarIndex = varMap.get(varIndex);
+                ((LoadInstruction) inst).setIndex(newVarIndex);
+                
+                if (debug && newVarIndex != varIndex) {
+                    System.out.println("Dynamic folding: Updated load of variable " + 
+                                     varIndex + " to " + newVarIndex + " at " + ih);
+                }
+            }
+        }
+        
+        ih = next;
+    }
+    
+    // Update method's max locals count if needed
+    if (maxLocals > methodGen.getMaxLocals()) {
+        methodGen.setMaxLocals(maxLocals);
+    }
+    
+    return modified;
+}
+
+/**
+ * Determines if a variable is modified within loop or branch bounds.
+ * This is crucial for safety - we don't rename variables that change within loops/branches.
+ */
+private boolean variableChangesInBounds(InstructionHandle ih, ArrayList<InstructionHandle> bounds) {
+    // Get the variable index from the instruction
+    int variableIndex;
+    if (ih.getInstruction() instanceof LoadInstruction) {
+        variableIndex = ((LoadInstruction) ih.getInstruction()).getIndex();
+    } else if (ih.getInstruction() instanceof StoreInstruction) {
+        variableIndex = ((StoreInstruction) ih.getInstruction()).getIndex();
+    } else if (ih.getInstruction() instanceof IINC) { 
+        variableIndex = ((IINC) ih.getInstruction()).getIndex();
+    } else {
+        // Not a variable-related instruction
+        return false;
+    }
+
+    // Check each bound pair (start, end)
+    for (int i = 0; i < bounds.size(); i += 2) {
+        if (i + 1 >= bounds.size()) break; // Safety check
+        
+        InstructionHandle start = bounds.get(i);
+        InstructionHandle end = bounds.get(i + 1);
+        
+        // Only check bounds that contain our instruction
+        if (start.getPosition() <= ih.getPosition() && ih.getPosition() <= end.getPosition()) {
+            // Iterate through instructions in the bounds
+            for (InstructionHandle current = start; current != end.getNext(); current = current.getNext()) {
+                if (current == null) break; // Safety check
+                
+                Instruction currentInstruction = current.getInstruction();
+                if (currentInstruction instanceof StoreInstruction) {
+                    if (((StoreInstruction) currentInstruction).getIndex() == variableIndex) {
+                        if (debug) {
+                            System.out.println("Variable " + variableIndex + " modified by " + 
+                                              currentInstruction + " within bounds");
+                        }
+                        return true;  
+                    } 
+                } else if (currentInstruction instanceof IINC) {
+                    if (((IINC) currentInstruction).getIndex() == variableIndex) {
+                        if (debug) {
+                            System.out.println("Variable " + variableIndex + " incremented by " + 
+                                              currentInstruction + " within bounds");
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Identifies loop boundaries in the instruction list.
+ * Returns pairs of handles (start, end) for each loop.
+ */
+private ArrayList<InstructionHandle> identifyLoopBounds(InstructionList instList) {
+    ArrayList<InstructionHandle> bounds = new ArrayList<>();
+    InstructionHandle[] handles = instList.getInstructionHandles();
+    
+    // A simple heuristic: backward branches usually indicate loops
+    for (InstructionHandle ih : handles) {
+        Instruction inst = ih.getInstruction();
+        if (inst instanceof BranchInstruction) {
+            InstructionHandle target = ((BranchInstruction) inst).getTarget();
+            // If branch target is before current instruction, it's likely a loop
+            if (target.getPosition() < ih.getPosition()) {
+                // Add loop start and end to bounds
+                bounds.add(target);
+                bounds.add(ih);
+                
+                if (debug) {
+                    System.out.println("Identified loop: " + target.getPosition() + 
+                                     " to " + ih.getPosition());
+                }
+            }
+        }
+    }
+    
+    return bounds;
+}
+
+/**
+ * Identifies branch boundaries (if/else blocks) in the instruction list.
+ * Returns pairs of handles (start, end) for each branch block.
+ */
+private ArrayList<InstructionHandle> identifyBranchBounds(InstructionList instList) {
+    ArrayList<InstructionHandle> bounds = new ArrayList<>();
+    InstructionHandle[] handles = instList.getInstructionHandles();
+    
+    // Basic approach: conditional branches usually indicate if/else blocks
+    for (InstructionHandle ih : handles) {
+        Instruction inst = ih.getInstruction();
+        if (inst instanceof IfInstruction && !(inst instanceof GOTO)) {
+            InstructionHandle target = ((IfInstruction) inst).getTarget();
+            // Add branch start and end to bounds
+            bounds.add(ih.getNext());
+            bounds.add(target.getPrev());
+            
+            if (debug) {
+                System.out.println("Identified branch: " + ih.getNext().getPosition() + 
+                                 " to " + target.getPrev().getPosition());
+            }
+        }
+    }
+    
+    return bounds;
+}
 
     private boolean removeUselessGOTO(InstructionList instList) {
         boolean modified = false;
