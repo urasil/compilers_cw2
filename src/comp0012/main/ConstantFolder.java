@@ -436,15 +436,8 @@ public class ConstantFolder {
                 modified = true;
                 assert added != null;
                 InstructionHandle newHandle = instList.insert(set[0], added);
-                try {
-                    instList.delete(set[0]);
-                } catch (TargetLostException e) {
-                    for (InstructionHandle target : e.getTargets()) {
-                        for (InstructionTargeter targeter : target.getTargeters()) {
-                            targeter.updateTarget(target, newHandle);
-                        }
-                    }
-                }
+                safeDelete(instList, set[0], newHandle);
+                
             }
         }
 
@@ -491,7 +484,7 @@ public class ConstantFolder {
                 IfInstruction ifInst = (IfInstruction) set[3].getInstruction();
                 boolean branch = evaluateComparison(cmpResult, ifInst.getOpcode());
 
-                // Replace with either GOTO or NOP depending on the result
+                // Replace with GOTO 
                 InstructionHandle newHandle = set[0].getPrev();
                 if (branch) {
                     BranchInstruction newInst = new GOTO(ifInst.getTarget());
@@ -558,18 +551,10 @@ public class ConstantFolder {
 
                 // Delete all the unused instructions
                 if (!toDelete.isEmpty()) {
-                    try {
-                        for (InstructionHandle h : toDelete) {
-                            instList.delete(h);
-                        }
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        for (InstructionHandle target : e.getTargets()) {
-                            for (InstructionTargeter targeter : target.getTargeters()) {
-                                targeter.updateTarget(target, current);
-                            }
-                        }
+                    for (InstructionHandle h : toDelete) {
+                        safeDelete(instList, h, current);
                     }
+                    modified = true;
                 }
             }
         }
@@ -765,12 +750,9 @@ public class ConstantFolder {
                 InstructionHandle target = g.getTarget();
                 // remove this goto if it points to next instruction anyways
                 if (target.getPosition() == handle.getNext().getPosition()) {
-                    try {
-                        instList.delete(handle);
-                        modified = true;
-                    } catch (TargetLostException e) {
-                        handleTargetLost(e, handle.getNext());
-                    }
+                    safeDelete(instList, handle, handle.getNext());
+                    modified = true;
+                    
                 }
 
             }
