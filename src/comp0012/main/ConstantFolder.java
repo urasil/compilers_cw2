@@ -387,13 +387,20 @@ public class ConstantFolder {
         boolean modified = false;
 
         InstructionFinder finder = new InstructionFinder(instructionList);
-        String pattern = "PushInstruction PushInstruction ArithmeticInstruction";
+        String pattern = "PushInstruction PushInstruction (ConversionInstruction)? ArithmeticInstruction";
 
         for (Iterator it = finder.search(pattern); it.hasNext();) {
+            
             InstructionHandle[] set = (InstructionHandle[]) it.next();
+            
             Instruction inst1 = set[0].getInstruction();
             Instruction inst2 = set[1].getInstruction();
             Instruction inst3 = set[2].getInstruction();
+            Instruction arithmeticInst = inst3;
+            
+            if (set.length == 4) {
+                arithmeticInst = set[3].getInstruction();
+            }
 
             Number val1 = getConstantValue(inst1, cpgen);
             Number val2 = getConstantValue(inst2, cpgen);
@@ -402,12 +409,15 @@ public class ConstantFolder {
                 continue;
             }
 
-            Number res = computeArithmeticResult(val1, val2, inst3);
+            Number res = computeArithmeticResult(val1, val2, arithmeticInst);
             if (res != null) {
                 Instruction r = createConstantInstruction(res, cpgen);
                 if(debug){
-                    System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ inst3.getName() + " => " + r);
-                    System.out.println("Adding: " + r);
+                    if(set.length == 4){
+                        System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ inst3 + " "+ arithmeticInst.getName() + " => " + r);
+                    }else{
+                        System.out.println("Folding: " + inst1 + " ("+val1+")"+" " + inst2 + " ("+val2+")" + " "+ arithmeticInst.getName() + " => " + r);
+                    }
                 }
 
                 instructionList.insert(set[0], r);
@@ -415,6 +425,9 @@ public class ConstantFolder {
                 safeDelete(instructionList, set[0], set[0].getPrev());
                 safeDelete(instructionList, set[1], set[0].getPrev());
                 safeDelete(instructionList, set[2], set[0].getPrev());
+                if (set.length == 4) {
+                    safeDelete(instructionList, set[3], set[0].getPrev());
+                }
 
                 modified = true;
             }
@@ -677,7 +690,6 @@ public class ConstantFolder {
                     newHandle = instList.insert(set[0], newInst);
                     if(debug){
                         System.out.println("Folding: " + set[0].getInstruction() + " ("+val1+")"+" " + set[1].getInstruction() + " ("+val2+")" + " "+ ifInst.getName() + " => " + newInst);
-                        System.out.println("Adding: " + newInst);
                     }
                 }      
                 
@@ -789,6 +801,69 @@ public class ConstantFolder {
     // Dynamic variable foldin
     private boolean dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
+
+        // map to track whether a variable might be constant
+        HashMap<Integer, Boolean> dynamicVars = new HashMap<>();
+        // map to record the literal constant value for a variable
+        HashMap<Integer, Number> literalValues = new HashMap<>();
+        // maps for tracking usage of variables
+        HashMap<Integer, Integer> loadCounts = new HashMap<>();
+        HashMap<Integer, List<InstructionHandle>> storeInstructions = new HashMap<>();
+
+        // first pass-> mark variables assigned via IINC or multiple stores as
+        // non-constant
+        for (InstructionHandle handle : instList.getInstructionHandles()) {
+            Instruction inst = handle.getInstruction();
+            if (inst instanceof IINC) {
+                int idx = ((IINC) inst).getIndex();
+                dynamicVars.put(idx, false);
+            } else if (inst instanceof StoreInstruction) {
+                int idx = ((StoreInstruction) inst).getIndex();
+
+                if (dynamicVars.containsKey(idx)){
+                    dynamicVars.put(idx, true);
+                }else{
+                    dynamicVars.put(idx, false);
+                }
+
+                // Track store instr
+                storeInstructions.computeIfAbsent(idx, k -> new ArrayList<>()).add(handle);
+            } else if (inst instanceof LoadInstruction) {
+                // Track load counts
+                int idx = ((LoadInstruction) inst).getIndex();
+                loadCounts.put(idx, loadCounts.getOrDefault(idx, 0) + 1);
+            }
+        }
+
+        // second pass-> record stores of possibly constant values
+        String pattern = "(DSTORE | FSTORE | ISTORE | LSTORE)";
+        InstructionFinder finder = new InstructionFinder(instList);
+        for (Iterator it = finder.search(pattern); it.hasNext();) {
+            InstructionHandle[] set = (InstructionHandle[]) it.next();
+            StoreInstruction store = (StoreInstruction) set[0].getInstruction();
+
+            InstructionHandle prev = set[0].getPrev();
+            if (prev != null && isConstantPushInstruction(prev.getInstruction())) {
+                PushInstruction push = (PushInstruction) prev.getInstruction();
+                int idx = store.getIndex();
+                if (dynamicVars.containsKey(idx) && dynamicVars.get(idx)) {
+                    Number val = getConstantValue((Instruction) push, cpgen);
+                    System.out.println("Dynamic variable folding: " + store + " " + push + " " + val);
+                    if (val == null)
+                        System.err.println("FATAL: Could not obtain literal value for unknown type");
+                    else
+                        literalValues.put(idx, val);
+                }
+            }else{
+
+            }
+
+
+
+
+            
+        }
+
         return modified;
     }
 
@@ -812,7 +887,7 @@ public class ConstantFolder {
             }
         }
 
-        if(debug){
+        if(verbose){
             System.out.println("Load instructions: " + loadsByVar);
             System.out.println("Store instructions: " + storesByVar);
         }

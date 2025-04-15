@@ -1,4 +1,4 @@
 Testsuite: comp0012.target.SimpleFoldingTest
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.027 sec
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.029 sec
 
-Testcase: testSimple took 0.004 sec
+Testcase: testSimple took 0.005 sec
