@@ -82,25 +82,6 @@ public class ConstantFolder {
         optimized = gen.getJavaClass();
     }
 
-    // long comp
-    private boolean evaluateComparison(int cmpResult, short opcode) {
-        if (opcode == Constants.IFLE) {
-            return cmpResult <= 0;
-        } else if (opcode == Constants.IFLT) {
-            return cmpResult < 0;
-        } else if (opcode == Constants.IFGE) {
-            return cmpResult >= 0;
-        } else if (opcode == Constants.IFGT) {
-            return cmpResult > 0;
-        } else if (opcode == Constants.IFEQ) {
-            return cmpResult == 0;
-        } else if (opcode == Constants.IFNE) {
-            return cmpResult != 0;
-        } else {
-            throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
-        }
-    }
-
     private boolean evaluateIntComparison(int a, int b, short opcode) {
         if (opcode == Constants.IF_ICMPEQ) {
             return (a == b);
@@ -119,7 +100,37 @@ public class ConstantFolder {
         }
     }
 
-    private void handleTargetLost(TargetLostException e, InstructionHandle newTarget) {
+    private boolean checkBranchCondition(int cmpResult, short opcode) {
+        if (opcode == Constants.IFLE) {
+            return cmpResult <= 0;
+        } else if (opcode == Constants.IFLT) {
+            return cmpResult < 0;
+        } else if (opcode == Constants.IFGE) {
+            return cmpResult >= 0;
+        } else if (opcode == Constants.IFGT) {
+            return cmpResult > 0;
+        } else if (opcode == Constants.IFEQ) {
+            return cmpResult == 0;
+        } else if (opcode == Constants.IFNE) {
+            return cmpResult != 0;
+        } else {
+            throw new UnsupportedOperationException("Unknown comparison opcode: " + opcode);
+        }
+    }
+
+    private boolean isConstantPushInstruction(Instruction inst) {
+        // checks if instruction pushes a constant value onto stack
+        return (inst instanceof LDC) ||
+                (inst instanceof LDC2_W) ||
+                (inst instanceof BIPUSH) ||
+                (inst instanceof SIPUSH) ||
+                (inst instanceof ICONST) ||
+                (inst instanceof FCONST) ||
+                (inst instanceof LCONST) ||
+                (inst instanceof DCONST);
+    }
+
+    private void updateLostTargetReferences(TargetLostException e, InstructionHandle newTarget) {
         InstructionHandle[] lostTargets = e.getTargets();
         for (InstructionHandle lost : lostTargets) {
             InstructionTargeter[] targeters = lost.getTargeters();
@@ -131,19 +142,6 @@ public class ConstantFolder {
         }
     }
 
-    // checks if the instruction pushes a constant value to the stack
-    private boolean isConstantPushInstruction(Instruction inst) {
-        return (inst instanceof LDC) ||
-                (inst instanceof LDC2_W) ||
-                (inst instanceof BIPUSH) ||
-                (inst instanceof SIPUSH) ||
-                (inst instanceof ICONST) ||
-                (inst instanceof FCONST) ||
-                (inst instanceof LCONST) ||
-                (inst instanceof DCONST);
-    }
-
-    // gets constant value from instruction.
     private Number getConstantValue(Instruction inst, ConstantPoolGen cpg) {
         if (inst instanceof LDC) {
             Object value = ((LDC) inst).getValue(cpg);
@@ -171,99 +169,6 @@ public class ConstantFolder {
         return null;
     }
 
-    // computes operation
-    private Number computeArithmeticResult(Number val1, Number val2, Instruction arithmeticInst) {
-        String opName = arithmeticInst.getName().toUpperCase();
-
-        // int
-        if (opName.startsWith("I")) {
-            int a = val1.intValue();
-            int b = val2.intValue();
-
-            if ("IADD".equals(opName)) {
-                return a + b;
-            } else if ("ISUB".equals(opName)) {
-                return a - b;
-            } else if ("IMUL".equals(opName)) {
-                return a * b;
-            } else if ("IDIV".equals(opName)) {
-                if (b == 0) {
-                    throw new ArithmeticException("Division by zero");
-                }
-                return a / b;
-            } else if ("IREM".equals(opName)) {
-                if (b == 0) {
-                    throw new ArithmeticException("Division by zero");
-                }
-                return a % b;
-            }
-        }
-
-        // long
-        if (opName.startsWith("L")) {
-            long a = val1.longValue();
-            long b = val2.longValue();
-
-            if ("LADD".equals(opName)) {
-                return a + b;
-            } else if ("LSUB".equals(opName)) {
-                return a - b;
-            } else if ("LMUL".equals(opName)) {
-                return a * b;
-            } else if ("LDIV".equals(opName)) {
-                if (b == 0) {
-                    throw new ArithmeticException("Division by zero");
-                }
-                return a / b;
-            } else if ("LREM".equals(opName)) {
-                if (b == 0) {
-                    throw new ArithmeticException("Division by zero");
-                }
-                return a % b;
-            }
-        }
-
-        // float
-        if (opName.startsWith("F")) {
-            float a = val1.floatValue();
-            float b = val2.floatValue();
-
-            if ("FADD".equals(opName)) {
-                return a + b;
-            } else if ("FSUB".equals(opName)) {
-                return a - b;
-            } else if ("FMUL".equals(opName)) {
-                return a * b;
-            } else if ("FDIV".equals(opName)) {
-                return a / b;
-            } else if ("FREM".equals(opName)) {
-                return a % b;
-            }
-        }
-
-        // double
-        if (opName.startsWith("D")) {
-            double a = val1.doubleValue();
-            double b = val2.doubleValue();
-
-            if ("DADD".equals(opName)) {
-                return a + b;
-            } else if ("DSUB".equals(opName)) {
-                return a - b;
-            } else if ("DMUL".equals(opName)) {
-                return a * b;
-            } else if ("DDIV".equals(opName)) {
-                return a / b;
-            } else if ("DREM".equals(opName)) {
-                return a % b;
-            }
-        }
-
-        // If none matched, return null
-        return null;
-    }
-
-    // creates constant-pushing instruction for numeric value.
     private Instruction createConstantInstruction(Number value, ConstantPoolGen cpg) {
         if (value instanceof Integer) {
             int val = value.intValue();
@@ -301,7 +206,92 @@ public class ConstantFolder {
         throw new UnsupportedOperationException("Unsupported value type: " + value.getClass().getName());
     }
 
-    // PERFORM SIMPLE FOLDING
+    private Number executeArithmeticOperation(Number val1, Number val2, Instruction arithmeticInst) {
+        String opName = arithmeticInst.getName().toUpperCase();
+
+        if (opName.startsWith("I")) {
+            int a = val1.intValue();
+            int b = val2.intValue();
+
+            if ("IADD".equals(opName)) {
+                return a + b;
+            } else if ("ISUB".equals(opName)) {
+                return a - b;
+            } else if ("IMUL".equals(opName)) {
+                return a * b;
+            } else if ("IDIV".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a / b;
+            } else if ("IREM".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a % b;
+            }
+        }
+
+        if (opName.startsWith("L")) {
+            long a = val1.longValue();
+            long b = val2.longValue();
+
+            if ("LADD".equals(opName)) {
+                return a + b;
+            } else if ("LSUB".equals(opName)) {
+                return a - b;
+            } else if ("LMUL".equals(opName)) {
+                return a * b;
+            } else if ("LDIV".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a / b;
+            } else if ("LREM".equals(opName)) {
+                if (b == 0) {
+                    throw new ArithmeticException("Division by zero");
+                }
+                return a % b;
+            }
+        }
+
+        if (opName.startsWith("F")) {
+            float a = val1.floatValue();
+            float b = val2.floatValue();
+
+            if ("FADD".equals(opName)) {
+                return a + b;
+            } else if ("FSUB".equals(opName)) {
+                return a - b;
+            } else if ("FMUL".equals(opName)) {
+                return a * b;
+            } else if ("FDIV".equals(opName)) {
+                return a / b;
+            } else if ("FREM".equals(opName)) {
+                return a % b;
+            }
+        }
+
+        if (opName.startsWith("D")) {
+            double a = val1.doubleValue();
+            double b = val2.doubleValue();
+
+            if ("DADD".equals(opName)) {
+                return a + b;
+            } else if ("DSUB".equals(opName)) {
+                return a - b;
+            } else if ("DMUL".equals(opName)) {
+                return a * b;
+            } else if ("DDIV".equals(opName)) {
+                return a / b;
+            } else if ("DREM".equals(opName)) {
+                return a % b;
+            }
+        }
+
+        return null;
+    }
+
     private boolean simpleFolding(ConstantPoolGen cpgen, InstructionList instructionList) {
         boolean modified = false;
 
@@ -328,7 +318,7 @@ public class ConstantFolder {
                 continue;
             }
 
-            Number res = computeArithmeticResult(val1, val2, arithmeticInst);
+            Number res = executeArithmeticOperation(val1, val2, arithmeticInst);
             if (res != null) {
                 Instruction r = createConstantInstruction(res, cpgen);
                 if (debug) {
@@ -374,7 +364,6 @@ public class ConstantFolder {
         }
     }
 
-    // CONSTANT VARIABLE FOLDING
     private boolean constantVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
 
@@ -482,7 +471,7 @@ public class ConstantFolder {
             if (val1 != null && val2 != null) {
                 int cmpResult = Long.compare(val1.longValue(), val2.longValue());
                 IfInstruction ifInst = (IfInstruction) set[3].getInstruction();
-                boolean branch = evaluateComparison(cmpResult, ifInst.getOpcode());
+                boolean branch = checkBranchCondition(cmpResult, ifInst.getOpcode());
 
                 // Replace with GOTO 
                 InstructionHandle newHandle = set[0].getPrev();
@@ -507,7 +496,7 @@ public class ConstantFolder {
 
             }
         }
-
+	// is this really necessary?
         // fifth pass-> find and replace return statements with constant expressions
         String returnPattern = "IRETURN";
         for (Iterator it = finder.search(returnPattern); it.hasNext();) {
@@ -515,20 +504,20 @@ public class ConstantFolder {
             InstructionHandle returnHandle = set[0];
             InstructionHandle current = returnHandle.getPrev();
 
-            // If the instruction before return is ICONST_1 (pushing true value)
+            // pushing bool value
             if (current != null && current.getInstruction() instanceof ICONST &&
                     ((ICONST) current.getInstruction()).getValue().intValue() == 1) {
 
-                // Keep track of all instructions to delete
+                //instructions to delete
                 List<InstructionHandle> toDelete = new ArrayList<>();
                 InstructionHandle prev = current.getPrev();
 
-                // Look backward through the instruction list for any constant pushes
+                // look backward through the instruction list for any constant pushes
                 while (prev != null) {
                     Instruction inst = prev.getInstruction();
                     InstructionHandle prevPrev = prev.getPrev();
 
-                    // If we find a store instruction, we need to also find its source
+                    // if we find a store instruction, we need to also find its source
                     if (inst instanceof StoreInstruction) {
                         toDelete.add(prev);
                         if (prevPrev != null && isConstantPushInstruction(prevPrev.getInstruction())) {
@@ -538,18 +527,16 @@ public class ConstantFolder {
                             prev = prevPrev;
                         }
                     }
-                    // If we find a constant push, it might be unused
                     else if (isConstantPushInstruction(inst)) {
                         toDelete.add(prev);
                         prev = prevPrev;
                     }
-                    // If we find anything else, stop looking back
                     else {
                         break;
                     }
                 }
 
-                // Delete all the unused instructions
+                // delete all the unused inst
                 if (!toDelete.isEmpty()) {
                     for (InstructionHandle h : toDelete) {
                         safeDelete(instList, h, current);
@@ -564,10 +551,7 @@ public class ConstantFolder {
 
     private boolean dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean optimizationApplied = false;
-        // We'll work with the current max locals count
         int slotCounter = 0;
-
-        // Find current max locals from the instruction list by inspecting variable indices
         for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
             Instruction inst = h.getInstruction();
             if (inst instanceof LocalVariableInstruction) {
@@ -583,20 +567,15 @@ public class ConstantFolder {
             }
         }
 
-        // Mapping from original variable indices to their versioned indices
+        // mapping from original variable indices to their versioned indices
         Map<Integer, Integer> slotMapping = new HashMap<>();
-
-        // Safety: Collect regions where variable renaming is dangerous
-        // First, identify loop structures (backward branches)
         List<int[]> loopBoundaryPositions = new ArrayList<>();
-        // Then, identify branch structures (if/else blocks)
         List<int[]> branchBoundaryPositions = new ArrayList<>();
 
-        // Scan for loops (backward branches indicate loops)
         for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
             if (h.getInstruction() instanceof BranchInstruction) {
                 InstructionHandle dest = ((BranchInstruction) h.getInstruction()).getTarget();
-                // If target position is earlier than current position, it's a loop
+                // if target position is earlier than current position -> loop
                 if (dest.getPosition() < h.getPosition()) {
                     int[] loopRegion = {dest.getPosition(), h.getPosition()};
                     loopBoundaryPositions.add(loopRegion);
@@ -607,7 +586,7 @@ public class ConstantFolder {
             }
         }
 
-        // Scan for branches (if statements that aren't GOTOs)
+        // sdcan for branches (if statements that aren't GOTOs)
         for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
             if (h.getInstruction() instanceof IfInstruction &&
                 !(h.getInstruction() instanceof GOTO)) {
@@ -623,24 +602,20 @@ public class ConstantFolder {
             }
         }
 
-        // Main processing loop - examine each instruction
         for (InstructionHandle currentInst = instList.getStart(); currentInst != null;) {
             InstructionHandle nextInst = currentInst.getNext();
             Instruction instruction = currentInst.getInstruction();
             int currentPosition = currentInst.getPosition();
 
-            // STORE instructions - candidates for creating new versions
+            // STORE instructions - creating new versions
             if (instruction instanceof StoreInstruction) {
                 int originalSlot = ((StoreInstruction) instruction).getIndex();
 
-                // Safety check: Is this variable modified in a loop or branch?
+                // Safety check: is this variable modified in a loop or branch?
                 boolean isUnsafe = false;
 
-                // Check each loop boundary
                 for (int[] loopRegion : loopBoundaryPositions) {
-                    // Only if our current instruction is within this loop
                     if (currentPosition >= loopRegion[0] && currentPosition <= loopRegion[1]) {
-                        // Check every instruction in the loop for modifications
                         for (InstructionHandle scanInst = instList.getStart();
                             scanInst != null;
                             scanInst = scanInst.getNext()) {
@@ -648,7 +623,7 @@ public class ConstantFolder {
                             int scanPosition = scanInst.getPosition();
                             if (scanPosition >= loopRegion[0] && scanPosition <= loopRegion[1]) {
                                 Instruction scanInstruction = scanInst.getInstruction();
-                                // Check if this instruction modifies our variable
+                                // check if this instruction modifies our variable
                                 if ((scanInstruction instanceof StoreInstruction &&
                                     ((StoreInstruction) scanInstruction).getIndex() == originalSlot) ||
                                     (scanInstruction instanceof IINC &&
@@ -662,12 +637,10 @@ public class ConstantFolder {
                     }
                 }
 
-                // Check each branch boundary if not already unsafe
                 if (!isUnsafe) {
                     for (int[] branchRegion : branchBoundaryPositions) {
-                        // Only if our current instruction is within this branch
+                        // is within this branch
                         if (currentPosition >= branchRegion[0] && currentPosition <= branchRegion[1]) {
-                            // Check every instruction in the branch for modifications
                             for (InstructionHandle scanInst = instList.getStart();
                                 scanInst != null;
                                 scanInst = scanInst.getNext()) {
@@ -675,7 +648,7 @@ public class ConstantFolder {
                                 int scanPosition = scanInst.getPosition();
                                 if (scanPosition >= branchRegion[0] && scanPosition <= branchRegion[1]) {
                                     Instruction scanInstruction = scanInst.getInstruction();
-                                    // Check if this instruction modifies our variable
+				    //again check if this instruction modifies our variable
                                     if ((scanInstruction instanceof StoreInstruction &&
                                         ((StoreInstruction) scanInstruction).getIndex() == originalSlot) ||
                                         (scanInstruction instanceof IINC &&
@@ -690,11 +663,8 @@ public class ConstantFolder {
                     }
                 }
 
-                // If it's safe to rename this variable
                 if (!isUnsafe) {
                     int newSlot;
-
-                    // If we've seen this variable before, give it a new slot
                     if (slotMapping.containsKey(originalSlot)) {
                         newSlot = slotCounter++;
                         optimizationApplied = true;
@@ -705,11 +675,9 @@ public class ConstantFolder {
                                             " at position " + currentPosition);
                         }
                     } else {
-                        // First time seeing this variable
                         newSlot = originalSlot;
                     }
 
-                    // Update the map and the instruction
                     slotMapping.put(originalSlot, newSlot);
                     ((StoreInstruction) instruction).setIndex(newSlot);
                 }
@@ -718,7 +686,7 @@ public class ConstantFolder {
             else if (instruction instanceof LoadInstruction) {
                 int originalSlot = ((LoadInstruction) instruction).getIndex();
 
-                // If we have a mapping for this variable, update the load
+                // if we have a mapping for this variable, update the load
                 if (slotMapping.containsKey(originalSlot)) {
                     int mappedSlot = slotMapping.get(originalSlot);
                     ((LoadInstruction) instruction).setIndex(mappedSlot);
@@ -731,7 +699,6 @@ public class ConstantFolder {
                 }
             }
 
-            // Move to next instruction
             currentInst = nextInst;
         }
 
@@ -817,7 +784,6 @@ public class ConstantFolder {
         return modified;
     }
 
-    // Remove unreachable code
     private boolean removeUnsedLoads(ConstantPoolGen cpgen, InstructionList instList) {
         boolean modified = false;
 
@@ -880,7 +846,7 @@ public class ConstantFolder {
                         instList.delete(storeIH);
                         modified = true;
                     } catch (TargetLostException e) {
-                        handleTargetLost(e, storeIH.getNext());
+                        updateLostTargetReferences(e, storeIH.getNext());
                     }
                 }
             }
