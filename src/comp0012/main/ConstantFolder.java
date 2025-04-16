@@ -209,7 +209,6 @@ public class ConstantFolder {
     private Number executeArithmeticOperation(Number val1, Number val2, Instruction arithmeticInst) {
         String opName = arithmeticInst.getName().toUpperCase();
 
-        // int
         if (opName.startsWith("I")) {
             int a = val1.intValue();
             int b = val2.intValue();
@@ -233,7 +232,6 @@ public class ConstantFolder {
             }
         }
 
-        // long
         if (opName.startsWith("L")) {
             long a = val1.longValue();
             long b = val2.longValue();
@@ -257,7 +255,6 @@ public class ConstantFolder {
             }
         }
 
-        // float
         if (opName.startsWith("F")) {
             float a = val1.floatValue();
             float b = val2.floatValue();
@@ -275,7 +272,6 @@ public class ConstantFolder {
             }
         }
 
-        // double
         if (opName.startsWith("D")) {
             double a = val1.doubleValue();
             double b = val2.doubleValue();
@@ -517,7 +513,7 @@ public class ConstantFolder {
 
             }
         }
-
+	// is this really necessary?
         // fifth pass-> find and replace return statements with constant expressions
         String returnPattern = "IRETURN";
         for (Iterator it = finder.search(returnPattern); it.hasNext();) {
@@ -525,20 +521,20 @@ public class ConstantFolder {
             InstructionHandle returnHandle = set[0];
             InstructionHandle current = returnHandle.getPrev();
 
-            // If the instruction before return is ICONST_1 (pushing true value)
+            // pushing bool value
             if (current != null && current.getInstruction() instanceof ICONST &&
                     ((ICONST) current.getInstruction()).getValue().intValue() == 1) {
 
-                // Keep track of all instructions to delete
+                //instructions to delete
                 List<InstructionHandle> toDelete = new ArrayList<>();
                 InstructionHandle prev = current.getPrev();
 
-                // Look backward through the instruction list for any constant pushes
+                // look backward through the instruction list for any constant pushes
                 while (prev != null) {
                     Instruction inst = prev.getInstruction();
                     InstructionHandle prevPrev = prev.getPrev();
 
-                    // If we find a store instruction, we need to also find its source
+                    // if we find a store instruction, we need to also find its source
                     if (inst instanceof StoreInstruction) {
                         toDelete.add(prev);
                         if (prevPrev != null && isConstantPushInstruction(prevPrev.getInstruction())) {
@@ -548,18 +544,16 @@ public class ConstantFolder {
                             prev = prevPrev;
                         }
                     }
-                    // If we find a constant push, it might be unused
                     else if (isConstantPushInstruction(inst)) {
                         toDelete.add(prev);
                         prev = prevPrev;
                     }
-                    // If we find anything else, stop looking back
                     else {
                         break;
                     }
                 }
 
-                // Delete all the unused instructions
+                // delete all the unused inst
                 if (!toDelete.isEmpty()) {
                     try {
                         for (InstructionHandle h : toDelete) {
@@ -582,10 +576,7 @@ public class ConstantFolder {
 
     private boolean dynamicVariableFolding(ConstantPoolGen cpgen, InstructionList instList) {
         boolean optimizationApplied = false;
-        // We'll work with the current max locals count
         int slotCounter = 0;
-
-        // Find current max locals from the instruction list by inspecting variable indices
         for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
             Instruction inst = h.getInstruction();
             if (inst instanceof LocalVariableInstruction) {
@@ -601,20 +592,15 @@ public class ConstantFolder {
             }
         }
 
-        // Mapping from original variable indices to their versioned indices
+        // mapping from original variable indices to their versioned indices
         Map<Integer, Integer> slotMapping = new HashMap<>();
-
-        // Safety: Collect regions where variable renaming is dangerous
-        // First, identify loop structures (backward branches)
         List<int[]> loopBoundaryPositions = new ArrayList<>();
-        // Then, identify branch structures (if/else blocks)
         List<int[]> branchBoundaryPositions = new ArrayList<>();
 
-        // Scan for loops (backward branches indicate loops)
         for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
             if (h.getInstruction() instanceof BranchInstruction) {
                 InstructionHandle dest = ((BranchInstruction) h.getInstruction()).getTarget();
-                // If target position is earlier than current position, it's a loop
+                // if target position is earlier than current position -> loop
                 if (dest.getPosition() < h.getPosition()) {
                     int[] loopRegion = {dest.getPosition(), h.getPosition()};
                     loopBoundaryPositions.add(loopRegion);
@@ -625,7 +611,7 @@ public class ConstantFolder {
             }
         }
 
-        // Scan for branches (if statements that aren't GOTOs)
+        // sdcan for branches (if statements that aren't GOTOs)
         for (InstructionHandle h = instList.getStart(); h != null; h = h.getNext()) {
             if (h.getInstruction() instanceof IfInstruction &&
                 !(h.getInstruction() instanceof GOTO)) {
@@ -641,24 +627,20 @@ public class ConstantFolder {
             }
         }
 
-        // Main processing loop - examine each instruction
         for (InstructionHandle currentInst = instList.getStart(); currentInst != null;) {
             InstructionHandle nextInst = currentInst.getNext();
             Instruction instruction = currentInst.getInstruction();
             int currentPosition = currentInst.getPosition();
 
-            // STORE instructions - candidates for creating new versions
+            // STORE instructions - creating new versions
             if (instruction instanceof StoreInstruction) {
                 int originalSlot = ((StoreInstruction) instruction).getIndex();
 
-                // Safety check: Is this variable modified in a loop or branch?
+                // Safety check: is this variable modified in a loop or branch?
                 boolean isUnsafe = false;
 
-                // Check each loop boundary
                 for (int[] loopRegion : loopBoundaryPositions) {
-                    // Only if our current instruction is within this loop
                     if (currentPosition >= loopRegion[0] && currentPosition <= loopRegion[1]) {
-                        // Check every instruction in the loop for modifications
                         for (InstructionHandle scanInst = instList.getStart();
                             scanInst != null;
                             scanInst = scanInst.getNext()) {
@@ -666,7 +648,7 @@ public class ConstantFolder {
                             int scanPosition = scanInst.getPosition();
                             if (scanPosition >= loopRegion[0] && scanPosition <= loopRegion[1]) {
                                 Instruction scanInstruction = scanInst.getInstruction();
-                                // Check if this instruction modifies our variable
+                                // check if this instruction modifies our variable
                                 if ((scanInstruction instanceof StoreInstruction &&
                                     ((StoreInstruction) scanInstruction).getIndex() == originalSlot) ||
                                     (scanInstruction instanceof IINC &&
@@ -680,12 +662,10 @@ public class ConstantFolder {
                     }
                 }
 
-                // Check each branch boundary if not already unsafe
                 if (!isUnsafe) {
                     for (int[] branchRegion : branchBoundaryPositions) {
-                        // Only if our current instruction is within this branch
+                        // is within this branch
                         if (currentPosition >= branchRegion[0] && currentPosition <= branchRegion[1]) {
-                            // Check every instruction in the branch for modifications
                             for (InstructionHandle scanInst = instList.getStart();
                                 scanInst != null;
                                 scanInst = scanInst.getNext()) {
@@ -693,7 +673,7 @@ public class ConstantFolder {
                                 int scanPosition = scanInst.getPosition();
                                 if (scanPosition >= branchRegion[0] && scanPosition <= branchRegion[1]) {
                                     Instruction scanInstruction = scanInst.getInstruction();
-                                    // Check if this instruction modifies our variable
+				    //again check if this instruction modifies our variable
                                     if ((scanInstruction instanceof StoreInstruction &&
                                         ((StoreInstruction) scanInstruction).getIndex() == originalSlot) ||
                                         (scanInstruction instanceof IINC &&
@@ -708,11 +688,8 @@ public class ConstantFolder {
                     }
                 }
 
-                // If it's safe to rename this variable
                 if (!isUnsafe) {
                     int newSlot;
-
-                    // If we've seen this variable before, give it a new slot
                     if (slotMapping.containsKey(originalSlot)) {
                         newSlot = slotCounter++;
                         optimizationApplied = true;
@@ -723,11 +700,9 @@ public class ConstantFolder {
                                             " at position " + currentPosition);
                         }
                     } else {
-                        // First time seeing this variable
                         newSlot = originalSlot;
                     }
 
-                    // Update the map and the instruction
                     slotMapping.put(originalSlot, newSlot);
                     ((StoreInstruction) instruction).setIndex(newSlot);
                 }
@@ -736,7 +711,7 @@ public class ConstantFolder {
             else if (instruction instanceof LoadInstruction) {
                 int originalSlot = ((LoadInstruction) instruction).getIndex();
 
-                // If we have a mapping for this variable, update the load
+                // if we have a mapping for this variable, update the load
                 if (slotMapping.containsKey(originalSlot)) {
                     int mappedSlot = slotMapping.get(originalSlot);
                     ((LoadInstruction) instruction).setIndex(mappedSlot);
@@ -749,7 +724,6 @@ public class ConstantFolder {
                 }
             }
 
-            // Move to next instruction
             currentInst = nextInst;
         }
 
