@@ -296,23 +296,31 @@ public class ConstantFolder {
         boolean modified = false;
 
         InstructionFinder finder = new InstructionFinder(instructionList);
-        String pattern = "PushInstruction PushInstruction (ConversionInstruction)? ArithmeticInstruction";
+        String pattern = "PushInstruction (ConversionInstruction)? PushInstruction (ConversionInstruction)? ArithmeticInstruction";
 
         for (Iterator it = finder.search(pattern); it.hasNext();) {
-
+            int push1Pos = 0;
+            int push2Pos = 1;
+            int arithmeticPos;
+        
             InstructionHandle[] set = (InstructionHandle[]) it.next();
 
-            Instruction inst1 = set[0].getInstruction();
-            Instruction inst2 = set[1].getInstruction();
-            Instruction inst3 = set[2].getInstruction();
-            Instruction arithmeticInst = inst3;
-
-            if (set.length == 4) {
-                arithmeticInst = set[3].getInstruction();
+            if (set[1].getInstruction() instanceof ConversionInstruction) {
+                push2Pos = 2;
+            }
+            if(set[push2Pos+1].getInstruction() instanceof ConversionInstruction) {
+                arithmeticPos = push2Pos + 2;
+            }else{
+                arithmeticPos = push2Pos + 1;
             }
 
-            Number val1 = getConstantValue(inst1, cpgen);
-            Number val2 = getConstantValue(inst2, cpgen);
+            Instruction push1 = set[push1Pos].getInstruction();
+            Instruction push2 = set[push2Pos].getInstruction();
+            Instruction arithmeticInst = set[arithmeticPos].getInstruction();
+    
+
+            Number val1 = getConstantValue(push1, cpgen);
+            Number val2 = getConstantValue(push2, cpgen);
 
             if (val1 == null || val2 == null) {
                 continue;
@@ -321,23 +329,11 @@ public class ConstantFolder {
             Number res = executeArithmeticOperation(val1, val2, arithmeticInst);
             if (res != null) {
                 Instruction r = createConstantInstruction(res, cpgen);
-                if (debug) {
-                    if (set.length == 4) {
-                        System.out.println("Folding: " + inst1 + " (" + val1 + ")" + " " + inst2 + " (" + val2 + ")"
-                                + " " + inst3 + " " + arithmeticInst.getName() + " => " + r);
-                    } else {
-                        System.out.println("Folding: " + inst1 + " (" + val1 + ")" + " " + inst2 + " (" + val2 + ")"
-                                + " " + arithmeticInst.getName() + " => " + r);
-                    }
-                }
-
+                
                 InstructionHandle newHandle = instructionList.insert(set[0], r);
 
-                safeDelete(instructionList, set[0], newHandle);
-                safeDelete(instructionList, set[1], newHandle);
-                safeDelete(instructionList, set[2], newHandle);
-                if (set.length == 4) {
-                    safeDelete(instructionList, set[3], newHandle);
+                for (int i = 0; i < set.length; i++) {
+                    safeDelete(instructionList, set[i], newHandle);
                 }
 
                 modified = true;
